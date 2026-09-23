@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 34
+- **Total Sessions**: 35
 - **Last Active**: 2026-09-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1195 | Active |
+| `journal-1.md` | ~1230 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 35 | 2026-09-23 | 全部公开层上线：custom domain + Access path 绑定 + /admin console + publisher role | `7309594` | `main` |
 | 34 | 2026-09-23 | GitHub 开源发布：gh-clean orphan 分支 saree push 至 IAmKings/LaNina | `4e66b58` | `main` |
 | 33 | 2026-09-22 | D 组签字：D1-D9 九项 + 12 freshness SLO 阈值上线 | `ec7bb38` | `main` |
 | 32 | 2026-09-22 | D 组解锁：六论点 reviewStatus approved + productionEvaluation true | `a6b7cef` | `main` |

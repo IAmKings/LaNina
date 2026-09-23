@@ -1193,3 +1193,38 @@ D 组生产口径解锁：seed 读/出场状态翻转、PENDING_RESEARCH_APPROVA
 ### Next Steps
 
 - GitHub repo 上 contributions/stats 和 README 补充（.dev.vars.example 可配合提供）
+
+
+## Session 35: 全部公开层上线：custom domain + Access path 绑定 + /admin console + publisher role
+<!-- trellis-session: v=2 fp=56af6e9cb716fe48 -->
+
+**Date**: 2026-09-23
+**Task**: 全部公开层上线：custom domain + Access path 绑定 + /admin console + publisher role
+**Branch**: `main`
+
+### Summary
+
+enso.125457.xyz 上线。实测确认：/ 与 /api/v1/* 公开 200，/admin/* 由 Cloudflare Access 登录（一个 path 绑定 app）。publisher 角色映射注入（ACCESS_EMAIL_ROLE_MAP）。/admin 空 path 重定向 /admin/runs。
+
+### Main Changes
+
+- 重大结构收口：public read + protected admin 分层，浏览无需登录；publish 走 /admin/daily 页面按钮
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7309594` | ENSO 市场监测 v1.4（/admin 落点=运行总览，管理台 console 可口访问） |
+
+### Testing
+
+- [OK] 三路径 probe：healthz 200 JSON / 首页 200 SPA / admin/runs Sign in page；lint/typecheck/test 全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 今晚 22:30 UTC cron 首 evaluation → 明早 /admin/daily 一键 publish 推进首页快照
+- 3 天 staging soak 计数 + 生产 env 部署准备

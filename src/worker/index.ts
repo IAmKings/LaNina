@@ -1219,6 +1219,8 @@ async function manualSourceRunFromCloudflareBindings(
     usdaFasApiKey: env.USDA_FAS_API_KEY,
     eiaApiKey: env.EIA_API_KEY,
     censusApiKey: env.CENSUS_API_KEY,
+    unctadClientId: env.UNCTAD_CLIENT_ID,
+    unctadApiKey: env.UNCTAD_API_KEY,
   });
   return new ManualSourceRunModule(
     new D1ManualSourceRunRepository(env.DB),

@@ -26,13 +26,23 @@ import {
 } from "../adapters/sources/world-bank-pink-sheet";
 import { createSourceAdapterRegistry } from "../adapters/sources/registry";
 import {
+  UNCTAD_ADAPTER_KEY,
+  UNCTAD_SOURCE_ID,
+  UNCTAD_SOURCE_URL,
+} from "../adapters/sources/unctad-lsci";
+import {
+  USA_CENSUS_ADAPTER_KEY,
+  USA_CENSUS_SOURCE_ID,
+  USA_CENSUS_SOURCE_URL,
+} from "../adapters/sources/usa-census-intltrade";
+import {
   USDA_FAS_PSD_ADAPTER_KEY,
   USDA_FAS_PSD_SOURCE_CONFIGS,
   USDA_FAS_PSD_SOURCE_URL,
 } from "../adapters/sources/usda-fas-psd";
 import type { LiveSmokeTarget } from "./live-smoke";
 
-type SecretRequirement = "usda" | "eia" | null;
+type SecretRequirement = "usda" | "eia" | "census" | "unctad" | null;
 
 export interface CodeOwnedSourceTarget {
   sourceId: string;
@@ -46,6 +56,9 @@ export interface LiveSmokeActivation {
   sourceIds: readonly string[];
   usdaFasApiKey?: string;
   eiaApiKey?: string;
+  censusApiKey?: string;
+  unctadClientId?: string;
+  unctadApiKey?: string;
 }
 
 export interface LiveSmokeSelection {
@@ -84,6 +97,18 @@ const targetDefinitions = new Map<string, CodeOwnedSourceTarget>([
     JPX_OSE_ADAPTER_KEY,
     null,
   ),
+  definition(
+    USA_CENSUS_SOURCE_ID,
+    USA_CENSUS_SOURCE_URL,
+    USA_CENSUS_ADAPTER_KEY,
+    "census",
+  ),
+  definition(
+    UNCTAD_SOURCE_ID,
+    UNCTAD_SOURCE_URL,
+    UNCTAD_ADAPTER_KEY,
+    "unctad",
+  ),
 ].map((entry) => [entry.sourceId, entry]));
 
 /**
@@ -102,6 +127,9 @@ export function selectLiveSmokeTargets(activation: LiveSmokeActivation): LiveSmo
   const registry = createSourceAdapterRegistry({
     usdaFasApiKey: activation.usdaFasApiKey,
     eiaApiKey: activation.eiaApiKey,
+    censusApiKey: activation.censusApiKey,
+    unctadClientId: activation.unctadClientId,
+    unctadApiKey: activation.unctadApiKey,
   });
   const targets: LiveSmokeTarget[] = [];
   const skippedSourceIds: string[] = [];
@@ -145,6 +173,10 @@ function hasRequiredSecret(
 ): boolean {
   if (requirement === "usda") return hasText(activation.usdaFasApiKey);
   if (requirement === "eia") return hasText(activation.eiaApiKey);
+  if (requirement === "census") return hasText(activation.censusApiKey);
+  if (requirement === "unctad") {
+    return hasText(activation.unctadClientId) && hasText(activation.unctadApiKey);
+  }
   return true;
 }
 

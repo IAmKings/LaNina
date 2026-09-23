@@ -2,8 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { EIA_EUROPE_BRENT_SOURCE_ID } from "../adapters/sources/eia-europe-brent-spot";
 import { NOAA_RONI_SOURCE_ID } from "../adapters/sources/noaa-roni";
+import {
+  UNCTAD_ADAPTER_KEY,
+  UNCTAD_SOURCE_ID,
+  UNCTAD_SOURCE_URL,
+} from "../adapters/sources/unctad-lsci";
+import {
+  USA_CENSUS_ADAPTER_KEY,
+  USA_CENSUS_SOURCE_ID,
+  USA_CENSUS_SOURCE_URL,
+} from "../adapters/sources/usa-census-intltrade";
 import { USDA_FAS_PSD_SOURCE_CONFIGS } from "../adapters/sources/usda-fas-psd";
-import { selectLiveSmokeTargets } from "./live-smoke-targets";
+import { codeOwnedSourceTarget, selectLiveSmokeTargets } from "./live-smoke-targets";
 
 describe("live smoke target activation", () => {
   it("defaults to no targets even when source IDs and secrets are present", () => {
@@ -67,5 +77,48 @@ describe("live smoke target activation", () => {
       enabled: true,
       sourceIds: ["*"],
     })).toThrow(expect.objectContaining({ code: "VALIDATION" }));
+  });
+
+  // 2026-09-23 staging 回归：结构代理（Census/UNCTAD）曾经不在代码白名单里，
+  // 手动运行一律 503 SOURCE_CONFIGURATION。这里锁死它们的 code-owned 目标。
+  it("owns the structural proxy sources so manual runs do not fail as SOURCE_CONFIGURATION", () => {
+    expect(codeOwnedSourceTarget(USA_CENSUS_SOURCE_ID)).toMatchObject({
+      sourceId: USA_CENSUS_SOURCE_ID,
+      sourceUrl: USA_CENSUS_SOURCE_URL,
+      adapterKey: USA_CENSUS_ADAPTER_KEY,
+      requiredSecret: "census",
+    });
+    expect(codeOwnedSourceTarget(UNCTAD_SOURCE_ID)).toMatchObject({
+      sourceId: UNCTAD_SOURCE_ID,
+      sourceUrl: UNCTAD_SOURCE_URL,
+      adapterKey: UNCTAD_ADAPTER_KEY,
+      requiredSecret: "unctad",
+    });
+  });
+
+  it("skips the structural proxies until both UNCTAD credentials are present", () => {
+    expect(selectLiveSmokeTargets({
+      enabled: true,
+      sourceIds: [USA_CENSUS_SOURCE_ID, UNCTAD_SOURCE_ID],
+    }).skippedSourceIds).toEqual([USA_CENSUS_SOURCE_ID, UNCTAD_SOURCE_ID]);
+
+    expect(selectLiveSmokeTargets({
+      enabled: true,
+      sourceIds: [UNCTAD_SOURCE_ID],
+      unctadClientId: "client-id-only",
+    }).skippedSourceIds).toEqual([UNCTAD_SOURCE_ID]);
+
+    const ready = selectLiveSmokeTargets({
+      enabled: true,
+      sourceIds: [USA_CENSUS_SOURCE_ID, UNCTAD_SOURCE_ID],
+      censusApiKey: "census-key",
+      unctadClientId: "client-id",
+      unctadApiKey: "client-secret",
+    });
+    expect(ready.skippedSourceIds).toEqual([]);
+    expect(ready.targets.map((target) => target.sourceId)).toEqual([
+      USA_CENSUS_SOURCE_ID,
+      UNCTAD_SOURCE_ID,
+    ]);
   });
 });
