@@ -26,7 +26,6 @@ export const USA_CENSUS_PORT_CODES: readonly { code: string; name: string }[] = 
 ] as const;
 
 const UNIT = "lb"; // Census Shipping Weight 原生单位（磅），不做换算
-const MAX_RESPONSE_BYTES = 256_000;
 const MONTHLY_WINDOW = 6;
 const RELEASE_LAG_WARNING = "CENSUS_MONTHLY_RELEASE_LAG";
 

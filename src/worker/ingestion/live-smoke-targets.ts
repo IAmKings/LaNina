@@ -13,7 +13,6 @@ import {
   JPX_OSE_ADAPTER_KEY,
   JPX_OSE_SOURCE_ID,
   JPX_OSE_SOURCE_URL,
-  jpxOseSettlementAdapter,
 } from "../adapters/sources/jpx-ose-settlement";
 import {
   NOAA_RONI_ADAPTER_KEY,
@@ -24,7 +23,6 @@ import {
   WORLD_BANK_ADAPTER_KEY,
   WORLD_BANK_SOURCE_ID,
   WORLD_BANK_SOURCE_URL,
-  worldBankPinkSheetAdapter,
 } from "../adapters/sources/world-bank-pink-sheet";
 import { createSourceAdapterRegistry } from "../adapters/sources/registry";
 import {

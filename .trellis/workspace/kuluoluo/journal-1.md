@@ -1159,3 +1159,37 @@ D 组生产口径解锁：seed 读/出场状态翻转、PENDING_RESEARCH_APPROVA
 
 - 3 天 staging soak 启动（D 组 blocker 已 remove）
 - A-Ⅲ 商业询价 6 家发送
+
+
+## Session 34: GitHub 开源发布：gh-clean orphan 分支 saree push 至 IAmKings/LaNina
+<!-- trellis-session: v=2 fp=1ac1ae5aaefa2ab4 -->
+
+**Date**: 2026-09-23
+**Task**: GitHub 开源发布：gh-clean orphan 分支 saree push 至 IAmKings/LaNina
+**Branch**: `main`
+
+### Summary
+
+开源开工。同事作者 + git@github.com:IAmKings/LaNina.git；公开 main 分支是 516 文件单 commit 记录（orphan squash），零敏感凭据（0 tokens/keys/emails/subdomains）。本地 main 的个人 journal 107+ 保持私有。
+
+### Main Changes
+
+- orphan branch gh-clean 516 files 单 commit；8 位 token、业务密钥、workers.dev 子域、account email 全部替换 <YOUR-…> 占位符。typecheck 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e66b58` | ENSO 市场监测 v1（Cloudflare Workers + D1/R2 生产-grade 监测平台） |
+
+### Testing
+
+- [OK] git ls-remote origin 验证 main 已指向 4e66b58；npm lint/typecheck 清洁
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- GitHub repo 上 contributions/stats 和 README 补充（.dev.vars.example 可配合提供）

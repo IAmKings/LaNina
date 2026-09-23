@@ -286,7 +286,6 @@ function exactRecordOptional(
     throw schemaDrift(`${field} 结构变化`);
   }
   const result = value as Record<string, unknown>;
-  const actual = new Set(Object.keys(result));
   for (const required of requiredKeys) {
     if (!(required in result)) throw schemaDrift(`${field} 缺少 ${required}`);
   }

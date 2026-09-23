@@ -7,7 +7,6 @@ import {
   pendingDirectionPolicy,
   pendingRule,
   pendingSelector,
-  pendingSlo,
   pendingStageGates,
 } from "./thesis-seeds";
 

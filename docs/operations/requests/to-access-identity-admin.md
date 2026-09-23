@@ -118,7 +118,7 @@ POST `/access/apps` 会返回 `1010 auth.forbidden`，因为 token **没有 Clou
 3. `jwks_url` = `https://steep-violet-bb7f.cloudflareaccess.com/cdn-cgi/access/certs`
 
 ### 另请熟知
-- 当前负责人 token（已撤销，需 Access Edit scope）POST /access/apps 返回 1010 auth.forbidden；
+- 当前负责人 token (cfut_wCgbmQDnK…) 没有 Access 编辑 scope，POST /access/apps 返回 1010 auth.forbidden；
 - 需重新生成一个包含 Access: Edit scope 的 token 或**手动在面板上建 Access 应用**；
 - 一旦拿到 token 我osc可自动保全 Access Application + 3 policies + **装遣测试身份**（Consumer via email）。
 

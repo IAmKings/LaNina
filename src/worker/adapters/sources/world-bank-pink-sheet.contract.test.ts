@@ -4,12 +4,10 @@ import {
   WORLD_BANK_RSS3_INDICATOR_ID,
   WORLD_BANK_SOURCE_URL,
   WORLD_BANK_TSR20_INDICATOR_ID,
-  extractMonthlyRubber,
   monthPeriodFromLabel,
   pinkSheetColumnLetters,
   worldBankPinkSheetAdapter,
 } from "./world-bank-pink-sheet";
-import { parseSharedStrings, parseWorksheetRows, readXlsxEntities } from "./minimal-xlsx";
 import { storedZip } from "./testing/stored-zip";
 
 /** 仓库内合成 XLSX：STORED 打包，模拟 Monthly Prices 的结构（不包含任何第三方数据行）。 */
