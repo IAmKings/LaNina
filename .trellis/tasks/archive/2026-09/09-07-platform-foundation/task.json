@@ -1,0 +1,29 @@
+{
+  "id": "platform-foundation",
+  "name": "platform-foundation",
+  "title": "平台基础与数据模型",
+  "description": "完成 Git/React/Vite/Worker 初始化、Cloudflare 环境、D1/R2、迁移与 CI 基线",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "fullstack",
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-07",
+  "completedAt": "2026-09-07",
+  "branch": "feat/platform-foundation",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "4-5",
+    "sequence": "1"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "daily-publication-lifecycle",
+  "name": "daily-publication-lifecycle",
+  "title": "日报发布闭环",
+  "description": "打通每日判定发布入口：人工发布接口、高风险转场审核写入、后台发布页与只读预检投影，使 AC-09/AC-14 的发布分支可证",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-13",
+  "completedAt": "2026-09-14",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "3-5",
+    "commit": "9f2aa52,f623d67"
+  }
+}

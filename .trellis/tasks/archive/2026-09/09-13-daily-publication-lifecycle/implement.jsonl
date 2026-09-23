@@ -1,0 +1,6 @@
+{"file": "docs/PRD-ENSO市场影响监测平台.md", "reason": "§10.6 后台接口、§11.2 发布规则、§9.1 daily_briefs/thesis_change_reviews 数据模型"}
+{"file": "CONTEXT.md", "reason": "每日判定、冻结、发布、审核的统一业务语言"}
+{"file": ".trellis/spec/backend/platform-contract.md", "reason": "Worker 路由、模块边界、安全响应头与发布门禁约定"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "D1 迁移、索引、原子批与 append-only 审计约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "后台错误码、脱敏与 fail-closed 约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Cron 与后台写操作的结构化日志与脱敏字段"}

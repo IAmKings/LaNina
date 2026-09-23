@@ -1,0 +1,3 @@
+{"file": "docs/PRD-ENSO市场影响监测平台.md", "reason": "核对平台和迁移是否满足产品规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality and security review checklist"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend accessibility, contract and performance checklist"}

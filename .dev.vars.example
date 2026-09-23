@@ -1,0 +1,32 @@
+# 本文件是占位模板（值全部为空）——真实密钥在 .dev.vars（gitignored，勿提交）。
+# npm run local:collect 读 .dev.vars；npm run deploy/staging 读 Cloudflare secrets。
+# 每一条密钥的申请入口见 README「数据来源与凭据」一节。
+
+# ── 无密钥也能跑的适配器 ─────────────────────────────────────
+# （NOAA RONI / NASA POWER / World Bank Pink Sheet / JPX-OSE 当日 CSV 无需 API key）
+
+# ── 需要 API key 的适配器 ─────────────────────────────────
+# https://api.eia.gov/v2/（EIA open data key，免费，分钟级发效）
+EIA_API_KEY=
+# USDA FAS PSD（api.data.gov 三方代理，免费）
+USDA_FAS_API_KEY=
+# U.S. Census Bureau International Trade API（免费 key）
+CENSUS_API_KEY=
+# UNCTAD Data Hub user-api（注册后免费）
+UNCTAD_CLIENT_ID=
+UNCtad_API_KEY=
+
+# ── Cloudflare 部署（wrangler OAuth 或 API token 二选一）──
+CLOUDFLARE_ACCOUNT_ID=
+# 使用 REST API / 无头部署时才需要；wrangler login 之后不需要
+CLOUDFLARE_API_TOKEN=
+
+# ── R2 snapshot 通道（B 组向导可自动生成） ───────────────
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+S3_API_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+
+# ── Cloudflare Access 后台三值（C 组向导自动写入） ────────
+ACCESS_JWT_ISSUER=
+ACCESS_JWT_AUDIENCE=
+ACCESS_JWKS_URL=

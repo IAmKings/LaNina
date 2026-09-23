@@ -1,0 +1,39 @@
+{
+  "id": "enso-market-monitor-mvp",
+  "name": "enso-market-monitor-mvp",
+  "title": "ENSO 市场影响监测平台 MVP",
+  "description": "依据现有 PRD 规划并交付 Cloudflare Worker、D1、R2 驱动的 ENSO 市场影响监测网站 MVP",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "fullstack",
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-07",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-07-platform-foundation",
+    "09-07-source-ingestion",
+    "09-07-thesis-evaluation-publishing",
+    "09-07-web-and-admin",
+    "09-07-release-quality",
+    "09-13-daily-publication-lifecycle",
+    "09-18-review-fixes-popstate-logging",
+    "09-18-adapter-logging-and-manual-run-regression",
+    "09-19-world-bank-jpx-local-adapters",
+    "09-22-staging-deploy-and-access-populated"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "45-55"
+  }
+}

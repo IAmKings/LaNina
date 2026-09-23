@@ -1,0 +1,3 @@
+{"file": "docs/sources/rubber-physical-market.md", "reason": "WB/JPX 候选矩阵、URL、结构探查与阻断条件"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "种子与 D1 约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志脱敏约定"}

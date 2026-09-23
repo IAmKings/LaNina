@@ -1,0 +1,3 @@
+{"file": "docs/PRD-ENSO市场影响监测平台.md", "reason": "核对 §11.2 门禁、§14.3 场景 E 与 §14.4 发布清单"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后台写路径的审计、并发与测试要求"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "公开与后台错误响应不得泄露内部信息"}

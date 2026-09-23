@@ -1,0 +1,32 @@
+[
+  {
+    "commodityCode": "0440000",
+    "countryCode": "SF",
+    "marketYear": "2026",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 28,
+    "unitId": 8,
+    "value": 16500
+  },
+  {
+    "commodityCode": "0440000",
+    "countryCode": "SF",
+    "marketYear": "2026",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 88,
+    "unitId": 8,
+    "value": 3500
+  },
+  {
+    "commodityCode": "0440000",
+    "countryCode": "SF",
+    "marketYear": "2026",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 176,
+    "unitId": 8,
+    "value": 2100
+  }
+]

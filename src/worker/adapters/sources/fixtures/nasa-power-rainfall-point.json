@@ -1,0 +1,36 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-79.92, 9.26, 58.2]
+  },
+  "properties": {
+    "parameter": {
+      "PRECTOTCORR": {
+        "20260823": 1.11111,
+        "20260824": 2,
+        "20260825": 3,
+        "20260826": 4,
+        "20260827": 5,
+        "20260828": 6,
+        "20260829": 7,
+        "20260830": 8,
+        "20260831": 9,
+        "20260901": 10,
+        "20260902": 11,
+        "20260903": 12,
+        "20260904": 13,
+        "20260905": 14
+      }
+    }
+  },
+  "header": {
+    "api": { "version": "v2.9.7", "name": "POWER Daily API" },
+    "sources": ["GEOSIT"],
+    "fill_value": -999,
+    "time_standard": "UTC"
+  },
+  "parameters": {
+    "PRECTOTCORR": { "units": "mm/day", "longname": "Precipitation Corrected" }
+  }
+}

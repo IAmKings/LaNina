@@ -1,0 +1,28 @@
+{
+  "id": "review-fixes-popstate-logging",
+  "name": "review-fixes-popstate-logging",
+  "title": "审查修复：变化页返回键与适配器日志",
+  "description": "修复第七轮代码审查发现的两个代码级问题：/changes 筛选状态与浏览器历史脱节（无 popstate 监听），以及存储适配器静默吞错导致生产排障只能靠 request ID",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-18",
+  "completedAt": "2026-09-18",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "1"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "id": "thesis-evaluation-publishing",
+  "name": "thesis-evaluation-publishing",
+  "title": "影响判定与发布流水线",
+  "description": "完成六条论点配置、阶段方向置信度、变化检测、每日草稿与发布",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-07",
+  "completedAt": "2026-09-14",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "7-9",
+    "sequence": "3",
+    "commit": "be8df5d"
+  }
+}

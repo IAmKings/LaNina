@@ -1,0 +1,4 @@
+{"file": "docs/PRD-ENSO市场影响监测平台.md", "reason": "§10.5 公开接口与错误信封、§13.1 日志不得泄露内部信息"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "结构化日志与脱敏字段约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误码、fail-closed 与脱敏约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端状态与可访问性约定"}

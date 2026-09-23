@@ -1,0 +1,42 @@
+[
+  {
+    "commodityCode": "4243000",
+    "countryCode": "MY",
+    "marketYear": "2025",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 28,
+    "unitId": 8,
+    "value": 19500
+  },
+  {
+    "commodityCode": "4243000",
+    "countryCode": "MY",
+    "marketYear": "2025",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 88,
+    "unitId": 8,
+    "value": 16700
+  },
+  {
+    "commodityCode": "4243000",
+    "countryCode": "MY",
+    "marketYear": "2025",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 176,
+    "unitId": 8,
+    "value": 2010
+  },
+  {
+    "commodityCode": "4243000",
+    "countryCode": "MY",
+    "marketYear": "2025",
+    "calendarYear": "2026",
+    "month": "08",
+    "attributeId": 57,
+    "unitId": 8,
+    "value": 24000
+  }
+]

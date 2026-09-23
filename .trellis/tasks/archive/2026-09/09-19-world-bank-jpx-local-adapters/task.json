@@ -1,0 +1,28 @@
+{
+  "id": "world-bank-jpx-local-adapters",
+  "name": "world-bank-jpx-local-adapters",
+  "title": "零成本数据源落地：World Bank 月度与 JPX 当日 CSV",
+  "description": "按 A-Ⅱ 层采购计划落地两个零成本来源：World Bank Pink Sheet 月度 RSS3/TSR20 与 JPX/OSE 当日结算价 CSV；基础种子登记（默认停用），本地 TEST ONLY seed 启用并接入 local:collect 实测采集落库",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-19",
+  "completedAt": "2026-09-19",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "2"
+  }
+}

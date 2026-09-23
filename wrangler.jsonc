@@ -1,0 +1,111 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "enso-monitor",
+	"main": "./src/worker/index.ts",
+	"compatibility_date": "2026-09-07",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"run_worker_first": ["/api/*", "/feed.xml", "/sitemap.xml", "/robots.txt"],
+		"directory": "dist/client"
+	},
+	"vars": {
+		"APP_ENV": "local",
+		"APP_VERSION": "0.1.0",
+		"ENABLE_CRON": "false",
+		"ENABLE_AUTO_PUBLICATION": "false"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "enso-monitor-local",
+			"database_id": "00000000-0000-0000-0000-000000000000"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "RAW",
+			"bucket_name": "enso-raw-local"
+		},
+		{
+			"bucket_name": "enso-raw-staging",
+			"binding": "enso_raw_staging",
+			"remote": true
+		}
+	],
+	"triggers": {
+		"crons": [
+			"*/15 * * * *",
+			"17 * * * *",
+			"30 22 * * *",
+			"0 23 * * *"
+		]
+	},
+	"observability": {
+		"enabled": true
+	},
+	"env": {
+		"staging": {
+			"name": "enso-monitor-staging",
+			"vars": {
+				"APP_ENV": "staging",
+				"APP_VERSION": "0.1.0",
+				"ENABLE_CRON": "true",
+				"ENABLE_AUTO_PUBLICATION": "false"
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "enso-monitor-staging",
+					"database_id": "ba68208e-22c0-4539-9e3e-d95a8ba22f75"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "RAW",
+					"bucket_name": "enso-raw-staging"
+				}
+			],
+			"triggers": {
+				"crons": [
+					"*/15 * * * *",
+					"17 * * * *",
+					"30 22 * * *",
+					"0 23 * * *"
+				]
+			}
+		},
+		"production": {
+			"name": "enso-monitor",
+			"vars": {
+				"APP_ENV": "production",
+				"APP_VERSION": "0.1.0",
+				"ENABLE_CRON": "false",
+				"ENABLE_AUTO_PUBLICATION": "false"
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "enso-monitor-prod",
+					"database_id": "00000000-0000-0000-0000-000000000002"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "RAW",
+					"bucket_name": "enso-raw-prod"
+				}
+			],
+			"triggers": {
+				"crons": [
+					"*/15 * * * *",
+					"17 * * * *",
+					"30 22 * * *",
+					"0 23 * * *"
+				]
+			}
+		}
+	}
+}

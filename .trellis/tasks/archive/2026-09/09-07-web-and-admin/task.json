@@ -1,0 +1,30 @@
+{
+  "id": "web-and-admin",
+  "name": "web-and-admin",
+  "title": "公开网站与研究后台",
+  "description": "完成 Read Model、公开接口、首页详情分类页、数据健康与最小研究后台",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "fullstack",
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-07",
+  "completedAt": "2026-09-14",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "9-11",
+    "sequence": "4",
+    "commit": "eb23cf2,247cc36,713e530"
+  }
+}

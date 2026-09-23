@@ -1,0 +1,28 @@
+{
+  "id": "adapter-logging-and-manual-run-regression",
+  "name": "adapter-logging-and-manual-run-regression",
+  "title": "审查修复收口：适配器日志与手动运行真实回归",
+  "description": "沿用 reportStorageFailure 模式接入 daily-briefs/thesis-drafts/thesis-publications/manual-source-runs 四个适配器的转换型 catch，并为手动来源运行补上真实 SQLite 写路径回归（第七轮审查遗留的最后一个测试盲区）",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-18",
+  "completedAt": "2026-09-18",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "1"
+  }
+}

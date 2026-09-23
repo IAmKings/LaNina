@@ -1,0 +1,29 @@
+{
+  "id": "source-ingestion",
+  "name": "source-ingestion",
+  "title": "数据采集与来源适配器",
+  "description": "完成 Source Spike、采集框架、Cron、健康状态及首批气候橡胶农业航运来源",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-07",
+  "completedAt": "2026-09-09",
+  "branch": "feat/source-ingestion",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "12-15",
+    "sequence": "2"
+  }
+}

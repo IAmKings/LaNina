@@ -1,0 +1,59 @@
+{
+  "name": "enso-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:demo": "vite --mode demo",
+    "build": "vite build",
+    "check:bundle": "node scripts/check-initial-client-js-budget.mjs",
+    "benchmark:public-api": "node scripts/benchmark-public-api.mjs",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:contract": "vitest run src/worker/adapters/sources",
+    "test:integration": "vitest run src/worker/index.test.ts src/worker/adapters/storage/daily-brief-migration.test.mjs src/worker/adapters/storage/cloudflare-read-models-query-plan.test.mjs",
+    "test:security": "vitest run src/worker/modules/access-auth.test.ts src/worker/adapters/sources/registry.test.ts src/worker/ingestion/run-source.test.ts src/worker/index.test.ts src/worker/security-headers.test.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:demo": "node scripts/run-local-published-demo-e2e.mjs",
+    "smoke:live": "vitest run --config vitest.live.config.ts --disableConsoleIntercept",
+    "test:watch": "vitest",
+    "db:migrate:local": "wrangler d1 migrations apply enso-monitor-local --local",
+    "db:seed:local": "wrangler d1 execute enso-monitor-local --local --file=seeds/0001_theses.sql && wrangler d1 execute enso-monitor-local --local --file=seeds/0002_sources_indicators.sql && wrangler d1 execute enso-monitor-local --local --file=seeds/0003_regional_rainfall.sql && wrangler d1 execute enso-monitor-local --local --file=seeds/0004_usda_fas_psd.sql && wrangler d1 execute enso-monitor-local --local --file=seeds/0005_eia_europe_brent.sql && wrangler d1 execute enso-monitor-local --local --file=seeds/0006_world_bank_jpx.sql && wrangler d1 execute enso-monitor-local --local --file=seeds/0007_structural_proxies.sql",
+    "db:seed:local-demo": "wrangler d1 execute enso-monitor-local --local --file=seeds/9001_test_only_local_demo_publication.sql",
+    "db:reset:local": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed:local && npm run db:seed:local-demo && npm run local:seed:probe",
+    "local:collect": "LOCAL_PIPELINE=1 LOCAL_PIPELINE_CRON='17 * * * *' node --env-file=.dev.vars node_modules/.bin/vitest run src/worker/local-pipeline.test.mjs --disableConsoleIntercept",
+    "local:evaluate": "LOCAL_PIPELINE=1 LOCAL_PIPELINE_CRON='30 22 * * *' node --env-file=.dev.vars node_modules/.bin/vitest run src/worker/local-pipeline.test.mjs --disableConsoleIntercept",
+    "local:publish": "LOCAL_PIPELINE=1 LOCAL_PIPELINE_CRON='0 23 * * *' node --env-file=.dev.vars node_modules/.bin/vitest run src/worker/local-pipeline.test.mjs --disableConsoleIntercept",
+    "local:seed:probe": "wrangler d1 execute enso-monitor-local --local --file=seeds/9002_test_only_local_free_sources.sql"
+  },
+  "dependencies": {
+    "echarts": "^6.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.54.4",
+    "@cloudflare/workers-types": "5.20260907.1",
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "eslint": "10.10.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.6",
+    "globals": "17.12.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.69.0",
+    "vite": "8.2.2",
+    "vitest": "5.0.0",
+    "wrangler": "4.129.0"
+  }
+}

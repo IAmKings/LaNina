@@ -1,0 +1,29 @@
+{
+  "id": "release-quality",
+  "name": "release-quality",
+  "title": "质量安全与生产发布",
+  "description": "完成端到端测试、许可安全检查、监控告警、staging 演练与生产上线",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "fullstack",
+  "package": null,
+  "priority": "P0",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-07",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "09-07-enso-market-monitor-mvp",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "estimate_person_days": "5-7",
+    "sequence": "5"
+  }
+}
