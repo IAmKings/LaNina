@@ -51,6 +51,12 @@ export function App() {
     });
   }, []);
 
+  // `/admin` 只是 Access 的保护前缀；进入后客户端改址到运行总览（无条件 effect）。
+  const bareAdmin = window.location.pathname === "/admin";
+  useEffect(() => {
+    if (bareAdmin) window.location.replace("/admin/runs");
+  }, [bareAdmin]);
+
   const adminRuns = window.location.pathname === "/admin/runs";
   const adminDailyDate = adminDailyDateFromPath(window.location.pathname);
   const adminDraftThesisId = adminDraftThesisIdFromPath(window.location.pathname);
@@ -64,6 +70,13 @@ export function App() {
       : adminDraftThesisId !== null
         ? <AdminDraftPage thesisId={adminDraftThesisId} />
         : null;
+  if (bareAdmin) {
+    return (
+      <PageShell currentPath="/admin/runs">
+        <AdminRouteFallback />
+      </PageShell>
+    );
+  }
   return (
     <PageShell currentPath={window.location.pathname}>
       {adminRoute !== null
