@@ -28,11 +28,6 @@
 		{
 			"binding": "RAW",
 			"bucket_name": "enso-raw-local"
-		},
-		{
-			"bucket_name": "enso-raw-staging",
-			"binding": "enso_raw_staging",
-			"remote": true
 		}
 	],
 	"triggers": {
