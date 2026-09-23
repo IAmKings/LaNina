@@ -79,6 +79,11 @@ curl -fsS -X POST https://<host>/api/admin/theses/ENSO-CORE-01/evaluate \
 省略 `cutoff` 时使用请求时刻；提供时必须是规范 UTC 且不得晚于当前时间。内容未变的重算会返回同一
 草稿版本（draft key 覆盖计算与证据，不覆盖触发者与时间）。
 
+## 在线访问
+
+- **staging 环境**：<https://enso.125457.xyz/>（自定义域名，绑定阶段每日自动采集评估）
+- 后台 `/admin` 由 Cloudflare Access 保护，需要白名单中邮箱登录
+
 ## 本地开发
 
 项目固定使用 Node.js 24 LTS。
