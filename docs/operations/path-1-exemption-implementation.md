@@ -184,7 +184,7 @@ UNREVIEWED_STAGE_DELTA_3:ENSO-CORE-01
 
 ### 收尾一：公开每日判定投影支持豁免（2026-09-25 修复的回归）
 
-`/api/v1/daily-briefs/:date` 的公开投影此前硬要求**六条 link**，而豁免后是 5 条 link + 1 条豁免 →
+`/api/v1/daily/:date` 的公开投影此前硬要求**六条 link**，而豁免后是 5 条 link + 1 条豁免 →
 `decodePublicDailyBrief` 抛 `ReadModelStorageError`，该接口对 2026-09-25 直接 503（首页 `/api/v1/overview`
 走的是另一条投影，所以未被发现）。
 
@@ -197,7 +197,7 @@ UNREVIEWED_STAGE_DELTA_3:ENSO-CORE-01
 
 `seeds/9001_test_only_local_demo_publication.sql` 标注「只允许本地」，但 staging 的 D1 里被应用过，
 导致合成的 2026-09-11 日报、合成论点版本/公开指针、6 条合成 RONI 观测与 2 条合成变化记录进入了公开面
-（`/api/v1/daily-briefs/2026-09-11`、Atom feed、RONI 指标序列）。
+（`/api/v1/daily/2026-09-11`、Atom feed、RONI 指标序列）。
 
 交付：`scripts/cleanup-staging-demo-rows.sql`（幂等；临时摘下 4 个删除保护触发器 → 按外键顺序只删
 `local-demo-*` 与 `brief_date='2026-09-11'` 的行 → 立即恢复触发器 → 输出 8 项核对计数）与
@@ -225,4 +225,4 @@ bash scripts/cleanup-staging-demo-rows.sh --yes
 npx wrangler deploy --config=./wrangler.jsonc -e staging
 ```
 
-> 未部署时 `/api/v1/daily-briefs/2026-09-25` 会因 5+1 豁免返回 503；部署后返回 5 条论点 + 1 条覆盖缺口。
+> 未部署时 `/api/v1/daily/2026-09-25` 会因 5+1 豁免返回 503；部署后返回 5 条论点 + 1 条覆盖缺口。
