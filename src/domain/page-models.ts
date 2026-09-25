@@ -185,6 +185,8 @@ export interface DailyBriefPageModel {
   readonly publishedAt: string;
   readonly methodologyVersion: string;
   readonly theses: readonly DailyBriefThesisModel[];
+  /** 路径①：该期被显式豁免的覆盖缺口，如实公开且不含方向/置信度。 */
+  readonly coverageGaps: readonly PublicCoverageGapModel[];
 }
 
 export interface CategoryPageModel {

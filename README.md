@@ -262,6 +262,10 @@ Cron 或自动发布。`confirmed` 只是人工只读核验结果，不是 stagi
   把当前 `main` 的工作树发布为公开分支 `origin/main`（本地 `gh-clean`）；发布前做敏感扫描（0 命中），
   保留公开分支上已裁剪的会话记录与公开专属文件，并**不推送 `main` 及其完整历史**。
   `--scan-only` 只做扫描。
+- [staging 演示数据清理](scripts/cleanup-staging-demo-rows.sql)（执行包装
+  `bash scripts/cleanup-staging-demo-rows.sh --yes`）：清除误应用到 staging 的 TEST ONLY 演示行
+  （`local-demo-*` 与 2026-09-11 合成日报）。幂等、先备份到 `.local-evidence/backups/`，
+  删除后立即恢复四个删除保护触发器，并断言残留为 0。
 
 ## 产品资料
 

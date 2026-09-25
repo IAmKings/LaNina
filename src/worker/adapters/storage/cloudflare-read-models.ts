@@ -52,7 +52,7 @@ const PUBLIC_CHANGES_PAGE_SIZE = 20;
 const FEED_CHANGE_LIMIT = 20;
 const FEED_DAILY_BRIEF_LIMIT = 20;
 const MAJOR_CHANGE_IMPORTANCE = 4;
-const DAILY_BRIEF_STATEMENT_COUNT = 2;
+const DAILY_BRIEF_STATEMENT_COUNT = 3;
 
 const METHODOLOGY_SECTIONS: MethodologyPageModel["sections"] = [
   {
@@ -578,18 +578,26 @@ export class D1PublicDailyBriefRepository implements PublicDailyBriefRepository 
               AND brief.published_at IS NOT NULL
             ORDER BY link.sort_order`,
         ).bind(briefDate),
+        this.database.prepare(
+          `SELECT exemption.thesis_id, exemption.gap_id, thesis.title
+             FROM daily_brief_exemptions exemption
+             JOIN theses thesis ON thesis.id = exemption.thesis_id
+            WHERE exemption.brief_date = ?
+            ORDER BY exemption.thesis_id`,
+        ).bind(briefDate),
       ]);
       if (!Array.isArray(results) || results.length !== DAILY_BRIEF_STATEMENT_COUNT) {
         throw new ReadModelStorageError();
       }
       const briefRows = rows(results[0]);
       const thesisRows = rows(results[1]);
+      const exemptionRows = rows(results[2]);
       if (briefRows.length === 0) {
-        if (thesisRows.length !== 0) throw new ReadModelStorageError();
+        if (thesisRows.length !== 0 || exemptionRows.length !== 0) throw new ReadModelStorageError();
         return null;
       }
       if (briefRows.length !== 1) throw new ReadModelStorageError();
-      return decodePublicDailyBrief(briefRows[0], thesisRows);
+      return decodePublicDailyBrief(briefRows[0], thesisRows, exemptionRows);
     } catch (error) {
       if (error instanceof ReadModelStorageError) throw error;
       reportStorageFailure("public-daily-briefs", error);
@@ -941,14 +949,24 @@ function decodeBrief(row: Record<string, unknown>): {
 function decodePublicDailyBrief(
   briefRow: Record<string, unknown>,
   thesisRows: readonly Record<string, unknown>[],
+  exemptionRows: readonly Record<string, unknown>[],
 ): DailyBriefPageModel {
   const brief = exactRecord(briefRow, [
     "brief_date", "headline", "summary", "data_cutoff", "published_at", "methodology_version",
   ]);
-  if (thesisRows.length !== REQUIRED_DAILY_THESIS_IDS.length) throw new ReadModelStorageError();
+  const coverageGaps = decodeCoverageGaps(exemptionRows);
+  const exempted = new Set(coverageGaps.map((gap) => gap.thesisId));
+  if (thesisRows.length + coverageGaps.length !== REQUIRED_DAILY_THESIS_IDS.length) {
+    throw new ReadModelStorageError();
+  }
   const theses = thesisRows.map(decodePublicDailyBriefThesis);
-  for (const [index, thesisId] of REQUIRED_DAILY_THESIS_IDS.entries()) {
-    if (theses[index]?.thesisId !== thesisId) throw new ReadModelStorageError();
+  const seen = new Set<string>();
+  for (const thesis of theses) {
+    if (seen.has(thesis.thesisId) || exempted.has(thesis.thesisId)) throw new ReadModelStorageError();
+    seen.add(thesis.thesisId);
+  }
+  for (const thesisId of REQUIRED_DAILY_THESIS_IDS) {
+    if (!seen.has(thesisId) && !exempted.has(thesisId)) throw new ReadModelStorageError();
   }
   return deepFreeze({
     briefDate: calendarDate(brief.brief_date),
@@ -958,6 +976,8 @@ function decodePublicDailyBrief(
     publishedAt: canonicalUtc(brief.published_at),
     methodologyVersion: nullableString(brief.methodology_version) ?? "unavailable",
     theses,
+    // 被豁免论点只公开覆盖缺口文案，绝不含方向/置信度。
+    coverageGaps,
   });
 }
 

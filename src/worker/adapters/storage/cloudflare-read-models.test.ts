@@ -331,21 +331,24 @@ describe("D1PublicReadModelRepository", () => {
     const database = new FakeDatabase([
       success([briefRow()]),
       success(dailyBriefThesisRows()),
+      success([]),
     ]);
 
     const result = await new D1PublicDailyBriefRepository(database as unknown as D1Database)
       .findPublished("2026-09-10");
 
-    expect(database.statements).toHaveLength(2);
+    expect(database.statements).toHaveLength(3);
     expect(database.statements.every((statement) => statement.values[0] === "2026-09-10")).toBe(true);
     expect(database.statements[0]!.query).toContain("brief.status = 'published'");
     expect(database.statements[1]!.query).toContain("daily_brief_theses link");
     expect(database.statements[1]!.query).toContain("version.status IN ('published', 'withdrawn')");
+    expect(database.statements[2]!.query).toContain("daily_brief_exemptions");
     expect(JSON.stringify(database.statements.map((statement) => statement.query)))
       .not.toMatch(/freeze_key|published_by|created_by|audit|snapshot|calculation_json|reason/i);
     expect(result).toMatchObject({
       briefDate: "2026-09-10",
       methodologyVersion: "evaluation-v1-draft",
+      coverageGaps: [],
     });
     expect(result?.theses).toEqual(expect.arrayContaining([
       expect.objectContaining({ thesisId: "ENSO-CORE-01", version: 2, invalidation: "独立机构反转确认。" }),
@@ -354,8 +357,33 @@ describe("D1PublicReadModelRepository", () => {
     expect(JSON.stringify(result)).not.toMatch(/version_id|freeze|published_by|created_by|audit|snapshot|calculation/i);
   });
 
+  it("exposes an exempted thesis as a coverage gap with no direction or confidence", async () => {
+    const database = new FakeDatabase([
+      success([briefRow()]),
+      success(dailyBriefThesisRows().slice(0, 5)),
+      success([{
+        thesis_id: "SHIP-EU-01",
+        gap_id: "eu-route-market-unlicensed",
+        title: "欧洲航线",
+      }]),
+    ]);
+
+    const result = await new D1PublicDailyBriefRepository(database as unknown as D1Database)
+      .findPublished("2026-09-10");
+
+    expect(result?.theses).toHaveLength(5);
+    expect(result?.theses.map((thesis) => thesis.thesisId)).not.toContain("SHIP-EU-01");
+    expect(result?.coverageGaps).toEqual([{
+      thesisId: "SHIP-EU-01",
+      title: "欧洲航线",
+      gapDescription: expect.stringContaining("欧线运价"),
+    }]);
+    expect(Object.keys(result!.coverageGaps[0]!)).toEqual(["thesisId", "title", "gapDescription"]);
+  });
+
   it("returns null for an absent daily brief and fails closed if frozen links are incomplete", async () => {
     await expect(new D1PublicDailyBriefRepository(new FakeDatabase([
+      success([]),
       success([]),
       success([]),
     ]) as unknown as D1Database).findPublished("2026-09-10")).resolves.toBeNull();
@@ -363,6 +391,18 @@ describe("D1PublicReadModelRepository", () => {
     await expect(new D1PublicDailyBriefRepository(new FakeDatabase([
       success([briefRow()]),
       success(dailyBriefThesisRows().slice(0, 5)),
+      success([]),
+    ]) as unknown as D1Database).findPublished("2026-09-10")).rejects.toBeInstanceOf(ReadModelStorageError);
+
+    // 五条 link + 一条豁免覆盖同一条 thesis（重复）→ fail closed
+    await expect(new D1PublicDailyBriefRepository(new FakeDatabase([
+      success([briefRow()]),
+      success(dailyBriefThesisRows()),
+      success([{
+        thesis_id: "ENSO-CORE-01",
+        gap_id: "enso-independent-confirmation",
+        title: "ENSO 强度与持续时间",
+      }]),
     ]) as unknown as D1Database).findPublished("2026-09-10")).rejects.toBeInstanceOf(ReadModelStorageError);
   });
 

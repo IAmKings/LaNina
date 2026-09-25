@@ -181,3 +181,48 @@ UNREVIEWED_STAGE_DELTA_3:ENSO-CORE-01
 
 
 
+
+### 收尾一：公开每日判定投影支持豁免（2026-09-25 修复的回归）
+
+`/api/v1/daily-briefs/:date` 的公开投影此前硬要求**六条 link**，而豁免后是 5 条 link + 1 条豁免 →
+`decodePublicDailyBrief` 抛 `ReadModelStorageError`，该接口对 2026-09-25 直接 503（首页 `/api/v1/overview`
+走的是另一条投影，所以未被发现）。
+
+修复：`D1PublicDailyBriefRepository` 增加第 3 条语句读取该期 `daily_brief_exemptions`（联 `theses` 取标题），
+`DailyBriefPageModel` 新增 `coverageGaps`；`decodePublicDailyBrief` 改为校验
+「link 数 + 豁免数 = 6 且两集合不重叠、并集覆盖六个必需论点」。被豁免论点只出现在 `coverageGaps`
+（`thesisId` / `title` / `gapDescription`），**不含方向与置信度**。
+
+### 收尾二：staging 演示数据清理（TEST ONLY 种子误用）
+
+`seeds/9001_test_only_local_demo_publication.sql` 标注「只允许本地」，但 staging 的 D1 里被应用过，
+导致合成的 2026-09-11 日报、合成论点版本/公开指针、6 条合成 RONI 观测与 2 条合成变化记录进入了公开面
+（`/api/v1/daily-briefs/2026-09-11`、Atom feed、RONI 指标序列）。
+
+交付：`scripts/cleanup-staging-demo-rows.sql`（幂等；临时摘下 4 个删除保护触发器 → 按外键顺序只删
+`local-demo-*` 与 `brief_date='2026-09-11'` 的行 → 立即恢复触发器 → 输出 8 项核对计数）与
+`scripts/cleanup-staging-demo-rows.sh`（先 `d1 export` 备份到 `.local-evidence/backups/`，再执行 SQL，
+最后断言残留为 0 且触发器恢复为 4）。
+
+验证：`src/worker/adapters/storage/demo-rows-cleanup.test.mjs` 用 staging 同形状的真实 SQLite
+（迁移 0001–0010 + 基础种子 + 演示种子 + 真实 v2 发布 5 条 + 撤回 SHIP-EU-01 演示指针 + 3 条高风险审核
++ 发布 2026-09-25 豁免判定）跑通，并断言：演示行全清零、2026-09-25 链路完好、删除保护重新生效、
+`PRAGMA foreign_key_check` 为空、公开面不再暴露合成日报与合成观测、**脚本可重复执行**。
+
+执行（需有 Cloudflare 凭据的终端；本机 token 已失效）：
+
+```bash
+bash scripts/cleanup-staging-demo-rows.sh --yes
+```
+
+### 收尾三：部署诊断与审核入口
+
+`0010` 迁移与 2026-09-25 判定已在 staging 生效；本轮 Worker/前端改动（写入阶段诊断、`GATES_FAILED`
+结构化门禁原因、后台「高风险转场待审核」一键记录、并发令牌竞态修复、非法版本 ID 400、
+公开每日判定豁免投影）仍需部署：
+
+```bash
+npx wrangler deploy --config=./wrangler.jsonc -e staging
+```
+
+> 未部署时 `/api/v1/daily-briefs/2026-09-25` 会因 5+1 豁免返回 503；部署后返回 5 条论点 + 1 条覆盖缺口。
