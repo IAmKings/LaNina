@@ -258,6 +258,10 @@ Cron 或自动发布。`confirmed` 只是人工只读核验结果，不是 stagi
   [USDA FAS PSD](docs/operations/usda-fas-psd-license-pre-review.md)、
   [EIA Brent](docs/operations/eia-europe-brent-license-pre-review.md)。
 - [staging 前置检查向导](scripts/cloudflare-staging-preflight.sh)：六阶段人工只读核对，不创建资源。
+- [公开仓库快照发布脚本](scripts/publish-public-snapshot.sh)：`bash scripts/publish-public-snapshot.sh "提交说明"`
+  把当前 `main` 的工作树发布为公开分支 `origin/main`（本地 `gh-clean`）；发布前做敏感扫描（0 命中），
+  保留公开分支上已裁剪的会话记录与公开专属文件，并**不推送 `main` 及其完整历史**。
+  `--scan-only` 只做扫描。
 
 ## 产品资料
 
