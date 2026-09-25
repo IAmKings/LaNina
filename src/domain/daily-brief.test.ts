@@ -111,6 +111,37 @@ describe("daily brief gates", () => {
       : item);
     expect(evaluateDailyBriefGates({ ...input, versions })[3]).toMatchObject({ status: "passed" });
   });
+
+  it("passes the completeness gate when a missing thesis is explicitly exempted", () => {
+    const input = facts();
+    const exemptedThesis = "SHIP-EU-01";
+    const result = evaluateDailyBriefGates({
+      ...input,
+      targets: input.targets.filter((target) => target.thesisId !== exemptedThesis),
+      versions: input.versions.filter((version) => version.thesisId !== exemptedThesis),
+      exemptions: [{ thesisId: exemptedThesis, gapId: "eu-route-market-unlicensed" }],
+    });
+    expect(result[1]).toMatchObject({ status: "passed", reasons: [] });
+  });
+
+  it("fails closed when a thesis is both frozen and exempted, or when the day is short", () => {
+    const input = facts();
+    const bothFrozenAndExempted = evaluateDailyBriefGates({
+      ...input,
+      exemptions: [{ thesisId: "ENSO-CORE-01", gapId: "enso-independent-confirmation" }],
+    });
+    expect(bothFrozenAndExempted[1]?.reasons).toEqual([
+      "EXEMPTION_CONFLICTS_TARGET:ENSO-CORE-01",
+      "TARGET_COUNT_NOT_SIX",
+    ]);
+
+    const short = evaluateDailyBriefGates({
+      ...input,
+      targets: input.targets.slice(0, 5),
+      versions: input.versions.slice(0, 5),
+    });
+    expect(short[1]?.reasons).toEqual(["TARGET_COUNT_NOT_SIX", "TARGET_MISSING:SHIP-EU-01"]);
+  });
 });
 
 describe("daily brief freeze identity and time boundary", () => {

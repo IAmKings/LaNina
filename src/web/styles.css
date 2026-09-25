@@ -965,6 +965,41 @@ h2 {
   font-size: 0.9rem;
 }
 
+/* 路径①：被豁免论点的覆盖缺口清单（如实展示，不提供方向/置信度） */
+.admin-daily-exemptions {
+  background: rgb(2 132 199 / 8%);
+  border-left-color: #0369a1;
+}
+
+.admin-daily-exemptions li {
+  color: #0c4a6e;
+}
+
+.coverage-gap-section {
+  border-top: 3px solid rgb(180 83 9 / 45%);
+}
+
+.coverage-gap-list {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.coverage-gap-list li {
+  border-left: 3px solid #b45309;
+  background: rgb(180 83 9 / 7%);
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+}
+
+.coverage-gap-list .muted {
+  color: #52605b;
+  font-size: 0.85rem;
+}
+
 .admin-daily-hint {
   color: #52605b;
   font-size: 0.8rem;
@@ -1307,4 +1342,25 @@ h2 {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* 后台受限投影（多为 Cloudflare Access 会话过期）时的重新登录入口 */
+.notice-panel-action {
+  margin-top: 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.notice-panel-action a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* 后台批量发布动作区（先发布六条论点版本，再发布每日判定） */
+.admin-lifecycle-actions {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }

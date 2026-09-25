@@ -71,9 +71,9 @@ export function createEiaEuropeBrentSpotAdapter(apiKey?: string): SourceAdapter 
 
       let response: Response;
       try {
-        response = await context.fetch(requestUrl, { headers, redirect: "error" });
-      } catch {
-        throw new SourceCollectionError("NETWORK", "无法连接 EIA", { retryable: true });
+        response = await context.fetch(requestUrl, { headers, redirect: "manual" });
+      } catch (error) {
+        throw new SourceCollectionError("NETWORK", "无法连接 EIA", { retryable: true, cause: error });
       }
 
       const etag = response.headers.get("etag");

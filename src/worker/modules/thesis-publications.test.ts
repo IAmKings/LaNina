@@ -39,13 +39,20 @@ describe("ThesisPublicationModule", () => {
     expect(repository.mutations).toEqual([]);
   });
 
-  it("keeps every initial pending seed unpublishable", async () => {
+  it("publishes the five gap-carrying seeds and keeps only SHIP-EU-01 disabled", async () => {
+    // D 组口径（2026-09-25）：覆盖缺口不再否决发布，只有人工未签字的 SHIP-EU-01 保持关闭。
     for (const seed of INITIAL_THESIS_SEEDS) {
       const repository = new StubPublicationRepository();
       const module = new ThesisPublicationModule(repository, () => seed, idFactory());
+      if (seed.id === "SHIP-EU-01") {
+        await expect(module.publish({ ...COMMAND, thesisId: seed.id }))
+          .rejects.toMatchObject({ code: "PUBLICATION_DISABLED" });
+        expect(repository.mutations).toEqual([]);
+        continue;
+      }
       await expect(module.publish({ ...COMMAND, thesisId: seed.id }))
-        .rejects.toMatchObject({ code: "PUBLICATION_DISABLED" });
-      expect(repository.mutations).toEqual([]);
+        .resolves.toMatchObject({ action: "publish", thesisId: seed.id });
+      expect(repository.mutations).toHaveLength(1);
     }
   });
 

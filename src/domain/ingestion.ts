@@ -190,9 +190,10 @@ export class SourceCollectionError extends Error {
   constructor(
     code: SourceErrorCode,
     message: string,
-    options: { retryable?: boolean; httpStatus?: number | null } = {},
+    options: { retryable?: boolean; httpStatus?: number | null; cause?: unknown } = {},
   ) {
-    super(message);
+    // `cause` 只用于诊断日志（run-source.ts 的 logFailureDiagnostic），不进入持久层。
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "SourceCollectionError";
     this.code = code;
     this.retryable = options.retryable ?? false;

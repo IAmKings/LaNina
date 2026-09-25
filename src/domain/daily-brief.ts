@@ -26,6 +26,15 @@ export interface DailyBriefVersionTarget {
   readonly thesisVersionId: string;
 }
 
+/**
+ * An explicitly acknowledged coverage gap (路径①, 2026-09-24). An exempted thesis has no published
+ * version for the cutoff, so it is not frozen; the gap is recorded instead of inventing a proxy.
+ */
+export interface DailyBriefExemption {
+  readonly thesisId: RequiredDailyThesisId;
+  readonly gapId: string;
+}
+
 export interface DailyBriefFreezeCommand {
   readonly cutoff: string;
   readonly targets: readonly DailyBriefVersionTarget[];
@@ -36,6 +45,8 @@ export interface DailyBriefFreezeCommand {
   readonly reason: string;
   readonly occurredAt: string;
   readonly expectedFreezeKey: string | null;
+  /** Optional for compatibility: a brief with six published targets has no exemptions. */
+  readonly exemptions?: readonly DailyBriefExemption[];
 }
 
 export interface DailyBriefSourceHealthSnapshot {
@@ -88,6 +99,8 @@ export interface DailyBriefGateFacts {
   readonly targets: readonly DailyBriefVersionTarget[];
   readonly versions: readonly DailyBriefFrozenVersionFact[];
   readonly sourceHealth: readonly DailyBriefSourceHealthSnapshot[];
+  /** Acknowledged coverage gaps; `targets.length + exemptions.length` must reach six. */
+  readonly exemptions?: readonly DailyBriefExemption[];
 }
 
 export interface FrozenDailyBriefVersion {
@@ -110,6 +123,7 @@ export interface DailyBriefResult {
   readonly gates: readonly DailyBriefGateResult[];
   readonly sourceHealth: readonly DailyBriefSourceHealthSnapshot[];
   readonly versions: readonly FrozenDailyBriefVersion[];
+  readonly exemptions: readonly DailyBriefExemption[];
   readonly publishedAt: string | null;
   readonly publishedBy: string | null;
   readonly attemptId: string;
@@ -133,7 +147,7 @@ export function shanghaiBriefDate(cutoff: string): string {
 export function evaluateDailyBriefGates(facts: DailyBriefGateFacts): readonly DailyBriefGateResult[] {
   canonicalUtc(facts.cutoff, "cutoff");
   const targetReasons = [
-    ...targetValidationReasons(facts.targets, facts.versions, facts.cutoff),
+    ...targetValidationReasons(facts.targets, facts.versions, facts.cutoff, facts.exemptions ?? []),
     ...sourceSnapshotReasons(facts.sourceHealth, facts.cutoff),
   ];
   const primary = PRIMARY_ENSO_SOURCE_IDS.map((sourceId) =>
@@ -188,12 +202,17 @@ export async function dailyBriefFreezeKey(input: {
   readonly topChanges: readonly string[];
   readonly versions: readonly DailyBriefFrozenVersionFact[];
   readonly sourceHealth: readonly DailyBriefSourceHealthSnapshot[];
+  readonly exemptions?: readonly DailyBriefExemption[];
 }): Promise<string> {
+  const exemptions = [...(input.exemptions ?? [])].sort(compareExemptions);
   const semantic = {
     keyVersion: "daily-brief-freeze-v1",
     briefDate: input.briefDate,
     cutoff: input.cutoff,
     targets: [...input.targets].sort(compareTargets),
+    // Omitted when empty so a six-published-version brief keeps the freeze identity it had before
+    // 路径①: only an actual exemption set changes the key.
+    ...(exemptions.length === 0 ? {} : { exemptions }),
     headline: input.headline,
     summary: input.summary,
     topChanges: input.topChanges,
@@ -207,15 +226,24 @@ function targetValidationReasons(
   targets: readonly DailyBriefVersionTarget[],
   versions: readonly DailyBriefFrozenVersionFact[],
   cutoff: string,
+  exemptions: readonly DailyBriefExemption[],
 ): string[] {
   const reasons: string[] = [];
   const targetTheses = new Set(targets.map((target) => target.thesisId));
   const targetVersions = new Set(targets.map((target) => target.thesisVersionId));
-  if (targets.length !== REQUIRED_DAILY_THESIS_IDS.length) reasons.push("TARGET_COUNT_NOT_SIX");
+  const exemptTheses = new Set(exemptions.map((exemption) => exemption.thesisId));
+  if (targets.length + exemptions.length !== REQUIRED_DAILY_THESIS_IDS.length) {
+    reasons.push("TARGET_COUNT_NOT_SIX");
+  }
   if (targetTheses.size !== targets.length) reasons.push("DUPLICATE_THESIS_TARGET");
   if (targetVersions.size !== targets.length) reasons.push("DUPLICATE_VERSION_TARGET");
+  if (exemptTheses.size !== exemptions.length) reasons.push("DUPLICATE_EXEMPTION");
   for (const thesisId of REQUIRED_DAILY_THESIS_IDS) {
-    if (!targetTheses.has(thesisId)) reasons.push(`TARGET_MISSING:${thesisId}`);
+    if (!targetTheses.has(thesisId) && !exemptTheses.has(thesisId)) reasons.push(`TARGET_MISSING:${thesisId}`);
+  }
+  for (const thesisId of exemptTheses) {
+    if (!REQUIRED_DAILY_THESIS_IDS.includes(thesisId)) reasons.push(`UNKNOWN_EXEMPTION:${thesisId}`);
+    if (targetTheses.has(thesisId)) reasons.push(`EXEMPTION_CONFLICTS_TARGET:${thesisId}`);
   }
   if (versions.length !== targets.length) reasons.push("VERSION_FACT_COUNT_MISMATCH");
   const byThesis = new Map(versions.map((version) => [version.thesisId, version]));
@@ -250,16 +278,37 @@ function factsSourceSnapshotInvalid(
   return versionTheses.size !== versions.length || targets.some((item) => !versionTheses.has(item.thesisId));
 }
 
-function highRiskReasons(version: DailyBriefFrozenVersionFact): string[] {
-  const previous = version.previousPublished;
+/** The minimal transition shape the high-risk rule compares; shared by gates and admin previews. */
+export interface HighRiskTransition {
+  readonly direction: DailyBriefFrozenVersionFact["direction"];
+  readonly stage: DailyBriefFrozenVersionFact["stage"];
+  readonly confidence: number;
+}
+
+/**
+ * High-risk trigger codes for a transition against the previous published brief. Returns an empty
+ * list when there is no baseline. The daily-brief gate prefixes these with `UNREVIEWED_`; the admin
+ * review preview uses the bare codes so an operator can see what needs a recorded review.
+ */
+export function highRiskTriggers(input: {
+  readonly direction: HighRiskTransition["direction"];
+  readonly stage: HighRiskTransition["stage"];
+  readonly confidence: number;
+  readonly previousPublished: HighRiskTransition | null;
+}): readonly string[] {
+  const previous = input.previousPublished;
   if (previous === null) return [];
-  const stageDelta = Math.abs(stageIndex(version.stage) - stageIndex(previous.stage));
-  const confidenceDelta = Math.abs(version.confidence - previous.confidence);
-  const triggers = [
-    ...(version.direction !== previous.direction ? ["DIRECTION_CHANGE"] : []),
+  const stageDelta = Math.abs(stageIndex(input.stage) - stageIndex(previous.stage));
+  const confidenceDelta = Math.abs(input.confidence - previous.confidence);
+  return [
+    ...(input.direction !== previous.direction ? ["DIRECTION_CHANGE"] : []),
     ...(stageDelta >= 2 ? [`STAGE_DELTA_${stageDelta}`] : []),
     ...(confidenceDelta >= 20 ? [`CONFIDENCE_DELTA_${confidenceDelta}`] : []),
   ];
+}
+
+function highRiskReasons(version: DailyBriefFrozenVersionFact): string[] {
+  const triggers = highRiskTriggers(version);
   if (triggers.length === 0 || version.transitionReviewed) return [];
   return triggers.map((trigger) => `UNREVIEWED_${trigger}:${version.thesisId}`);
 }
@@ -281,6 +330,11 @@ function gate(code: DailyBriefGateCode, reasons: string[], explanation: string):
 }
 
 function compareTargets(left: DailyBriefVersionTarget, right: DailyBriefVersionTarget): number {
+  return REQUIRED_DAILY_THESIS_IDS.indexOf(left.thesisId)
+    - REQUIRED_DAILY_THESIS_IDS.indexOf(right.thesisId);
+}
+
+function compareExemptions(left: DailyBriefExemption, right: DailyBriefExemption): number {
   return REQUIRED_DAILY_THESIS_IDS.indexOf(left.thesisId)
     - REQUIRED_DAILY_THESIS_IDS.indexOf(right.thesisId);
 }

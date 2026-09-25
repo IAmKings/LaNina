@@ -167,7 +167,8 @@ async function putSnapshot(
     return await snapshots.put(input);
   } catch (error) {
     if (error instanceof SourceCollectionError) throw error;
-    throw new SourceCollectionError("STORAGE", "无法保存来源原始快照", { retryable: true });
+    // 透传 cause：R2 的具体拒绝原因（条件写冲突、体积、元数据）只在日志里可见。
+    throw new SourceCollectionError("STORAGE", "无法保存来源原始快照", { retryable: true, cause: error });
   }
 }
 
@@ -178,6 +179,7 @@ function normalizedFailure(error: unknown): {
   retryable: boolean;
 } {
   if (error instanceof SourceCollectionError) {
+    logFailureDiagnostic(error);
     return {
       errorCode: error.code,
       errorMessage: SAFE_FAILURE_MESSAGES[error.code],
@@ -191,6 +193,33 @@ function normalizedFailure(error: unknown): {
     httpStatus: null,
     retryable: false,
   };
+}
+
+
+/**
+ * 失败诊断只进 Workers Logs，绝不写入 D1：`source_runs.error_message` 保持既定的
+ * 安全文案契约（不得落原始异常文本，避免上游响应或凭据片段持久化）。
+ */
+function logFailureDiagnostic(error: SourceCollectionError): void {
+  // 逐层展开 cause 链（workerd 的 fetch 失败通常是 TypeError: fetch failed，真正原因在其下一层）。
+  const chain: string[] = [];
+  let current: unknown = error.cause;
+  for (let depth = 0; depth < 3 && current instanceof Error; depth += 1) {
+    chain.push(`${current.name}: ${current.message}`);
+    current = current.cause;
+  }
+  const detail = [error.message, ...chain]
+    .filter((part) => part.length > 0)
+    .join(" ← ")
+    .replace(/\?[^\s]*/g, "?<redacted>")
+    .replace(/(api[_-]?key|key|token|secret|client_?secret)=[^&\s]*/gi, "$1=<redacted>")
+    .slice(0, 200);
+  console.log(JSON.stringify({
+    scope: "ingestion.failure",
+    errorCode: error.code,
+    httpStatus: error.httpStatus,
+    detail,
+  }));
 }
 
 const SAFE_FAILURE_MESSAGES: Record<SourceErrorCode, string> = {

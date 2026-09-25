@@ -844,6 +844,61 @@ function deepFreeze<T>(value: T): T {
 // The decoder owns the trust boundary. Exported constants are decoded copies, not the mutable input.
 export const PENDING_REVIEW = { reviewStatus: "pending", active: false } as const;
 
+/**
+ * D 组 D3 签字（2026-09-24）：selectors 转 approved/active。权重 0–100 整数按层给出；
+ * control 层（控制变量）权重 0：参与解释与门禁，不参与方向计算。
+ */
+export function approvedSelector(
+  id: string, indicatorId: EvaluationIndicatorId, layer: EvidenceLayer,
+  defaultStance: EvidenceStance, notes: string,
+): IndicatorSelector {
+  const weightByLayer: Record<EvidenceLayer, number> = {
+    market: 100, physical: 80, balance: 70, weather: 60, forecast: 50, control: 0,
+  };
+  return {
+    id, indicatorId, layer, defaultStance,
+    weight: weightByLayer[layer], reviewStatus: "approved", active: true, notes,
+  };
+}
+
+/**
+ * D 组 D3 签字：规则 approved/active。第一版用 `selector_present`（可执行、不虚构数值阈值）；
+ * 数值阈值作为 D3 第二批升级为 numeric_compare。解码器禁止 approved 使用 manual_review_required。
+ */
+export function approvedRule(
+  id: string, label: string, reason: string, selectorIds: readonly string[],
+): RuleDescriptor {
+  return {
+    id, label, reviewStatus: "approved", active: true,
+    predicate: { kind: "selector_present", selectorIds: [...selectorIds], minimumMatches: 1 },
+  };
+}
+
+/**
+ * D 组 D4 签字：阶段门槛 approved/active，minimumRuleMatches=1（落在 1..ruleIds.length）。
+ * 例外（方案 A，2026-09-24 负责人确认）：该论点若**没有 market 层证据**，
+ * `market_confirmed` 门槛保持 pending/inactive —— 不主张无法归因的市场确认阶段。
+ */
+export function approvedStageGates(
+  supportRuleId: string,
+  easingRuleIds: readonly string[],
+  requiredLayers: Readonly<Record<PromotableThesisStage, readonly EvidenceLayer[]>>,
+): readonly StageGateDescriptor[] {
+  return PROMOTABLE_THESIS_STAGES.map((targetStage) => {
+    const ruleIds = targetStage === "easing" ? [...easingRuleIds] : [supportRuleId];
+    const layers = [...requiredLayers[targetStage]];
+    const unprovableMarketGate = targetStage === "market_confirmed" && !layers.includes("market");
+    return {
+      targetStage,
+      requiredLayers: layers,
+      ruleIds,
+      minimumRuleMatches: unprovableMarketGate ? null : Math.min(1, ruleIds.length),
+      reviewStatus: unprovableMarketGate ? "pending" : "approved",
+      active: !unprovableMarketGate,
+    };
+  });
+}
+
 export function pendingSelector(
   id: string,
   indicatorId: EvaluationIndicatorId,
@@ -888,6 +943,37 @@ export function pendingStageGates(
     ...PENDING_REVIEW,
   }));
 }
+
+/**
+ * D 组 D5 签字（2026-09-24 负责人确认）：方向策略 approved/active。
+ * 支撑→偏多；证伪/缓解→偏空；失效规则不主张方向（null）。未审核策略仍 fail-closed。
+ */
+export function approvedDirectionPolicy(ruleIds: readonly string[]): DirectionPolicy {
+  return {
+    version: "direction-v1",
+    reviewStatus: "approved",
+    active: true,
+    mappings: ruleIds.map((ruleId) => ({
+      ruleId,
+      direction: ruleId.endsWith("-support")
+        ? "bullish"
+        : ruleId.endsWith("-refute") || ruleId.endsWith("-relief")
+          ? "bearish"
+          : null,
+    })),
+  };
+}
+
+/** D5 签字：置信度策略 approved/active，上限沿用一页纸口径（仅预测 49 / 必需层过期 59 / 覆盖缺口 69）。 */
+export const APPROVED_CONFIDENCE_POLICY: ConfidencePolicy = {
+  version: "confidence-v1",
+  reviewStatus: "approved",
+  active: true,
+  lateFreshnessScore: 59,
+  sourceTierScores: { A: 100, B: 85, C: 70 },
+  missingRequiredLayerCap: 49,
+  coverageGapCap: 69,
+};
 
 export function pendingDirectionPolicy(ruleIds: readonly string[]): DirectionPolicy {
   return {

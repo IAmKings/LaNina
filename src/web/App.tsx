@@ -321,6 +321,27 @@ export function OverviewContent({ overview }: { overview: OverviewState }) {
         </div>
       </section>
 
+      {data.coverageGaps.length === 0 ? null : (
+        <section className="content-section coverage-gap-section" aria-labelledby="coverage-gap-heading">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">数据覆盖不足</p>
+              <h2 id="coverage-gap-heading">已如实标注覆盖缺口的判断</h2>
+            </div>
+            <a href="/methodology">查看方法论</a>
+          </div>
+          <ul className="coverage-gap-list">
+            {data.coverageGaps.map((gap) => (
+              <li key={gap.thesisId}>
+                <strong>{gap.title}</strong>
+                <span>数据覆盖不足：{gap.gapDescription}</span>
+                <span className="muted">该判断暂无已发布方向与置信度，不以代理数据替代。</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="content-section" aria-labelledby="risk-map-heading">
         <div className="section-heading">
           <div>

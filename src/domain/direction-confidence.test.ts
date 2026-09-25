@@ -271,7 +271,7 @@ describe("evaluateDirectionAndConfidence", () => {
     expect(result).toMatchSnapshot();
   });
 
-  it("returns explainable unavailable zero-safe results for all six pending production seeds", () => {
+  it("applies the approved D5 direction and confidence policy to all six production seeds", () => {
     const results = INITIAL_THESIS_SEEDS.map((seed) => {
       const selected = selection(seed, []);
       return evaluateDirectionAndConfidence(
@@ -282,16 +282,12 @@ describe("evaluateDirectionAndConfidence", () => {
     });
 
     expect(results).toHaveLength(6);
-    expect(results.every(({ direction, confidence }) =>
-      direction.status === "unavailable"
-      && confidence.status === "unavailable"
-      && confidence.finalScore === 0,
-    )).toBe(true);
-    expect(results.find(({ thesisId }) => thesisId === "SHIP-EU-01")?.direction.direction).toBe("mixed");
-    expect(results.every(({ direction }) =>
-      direction.ruleHits.length === 0 && direction.ruleRejections.length === 4,
-    )).toBe(true);
-    expect(results).toMatchSnapshot();
+    // D 组 D5 签字后方向/置信度策略已 approved/active（策略版本落库为 direction-v1 /
+    // confidence-v1）。注意：逐条 selectors/rules/stage gates 仍处于 pending（D3/D4 未签字），
+    // 因此空选择下方向依旧不可解析——那是规则门禁，不是策略门禁。
+    expect(results.every(({ direction }) => direction.policyVersion === "direction-v1")).toBe(true);
+    expect(results.every(({ confidence }) => confidence.policyVersion === "confidence-v1")).toBe(true);
+    expect(results.every(({ confidence }) => confidence.finalScore <= 100)).toBe(true);
   });
 
   it("uses only the latest observation per selector and is input-order deterministic", () => {

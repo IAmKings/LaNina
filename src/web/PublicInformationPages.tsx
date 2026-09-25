@@ -278,6 +278,21 @@ export function MethodologyPage() {
           </article>
         ))}
       </section>
+      {state.data.coverageGaps.length === 0 ? null : (
+        <section className="content-section coverage-gap-section" aria-labelledby="methodology-coverage-gap-title">
+          <p className="eyebrow">数据覆盖不足</p>
+          <h2 id="methodology-coverage-gap-title">当前已如实标注的覆盖缺口</h2>
+          <ul className="coverage-gap-list">
+            {state.data.coverageGaps.map((gap) => (
+              <li key={gap.thesisId}>
+                <strong>{gap.title}</strong>
+                <span>数据覆盖不足：{gap.gapDescription}</span>
+                <span className="muted">该判断在覆盖缺口关闭前不发布方向与置信度。</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

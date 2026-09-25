@@ -1,5 +1,6 @@
 import { reportStorageFailure } from "./storage-logging";
 import { INITIAL_THESIS_SEEDS } from "../../../domain/initial-thesis-seeds";
+import { coverageGapDescription } from "../../../domain/coverage-gaps";
 import type { AtomDailyBriefModel, AtomFeedModel } from "../../../domain/atom-feed";
 import type {
   CategoryPageModel,
@@ -12,6 +13,7 @@ import type {
   MethodologyPageModel,
   OverviewPageModel,
   PageFreshness,
+  PublicCoverageGapModel,
   PublicMarketCategory,
   PublicSourceReference,
   PublicChangeModel,
@@ -38,7 +40,8 @@ import {
   type PublicReadModelRepository,
 } from "../../modules/read-models";
 
-const OVERVIEW_STATEMENT_COUNT = 4;
+const OVERVIEW_STATEMENT_COUNT = 5;
+const METHODOLOGY_STATEMENT_COUNT = 2;
 const TOP_CHANGE_LIMIT = 3;
 const THESIS_STATEMENT_COUNT = 5;
 const PUBLIC_INDICATOR_LIMIT = 8;
@@ -112,6 +115,23 @@ export const OVERVIEW_PUBLISHED_THESES_QUERY = `SELECT thesis.id, thesis.slug, t
               AND version.thesis_id = thesis.id
               AND version.status = 'published'
             ORDER BY thesis.id`;
+
+/**
+ * 路径①（2026-09-24）：最新已发布每日判定显式豁免的覆盖缺口。
+ *
+ * 被豁免论点没有已发布版本，因此它既不会出现在 `theses` 卡片里，也不能伪造方向或置信度；
+ * 这里只把"数据覆盖不足"的缺口如实投影到公开页面。
+ */
+export const LATEST_DAILY_BRIEF_COVERAGE_GAPS_QUERY = `SELECT exemption.thesis_id, exemption.gap_id, thesis.title
+   FROM daily_brief_exemptions exemption
+   JOIN theses thesis ON thesis.id = exemption.thesis_id
+  WHERE exemption.brief_date = (
+    SELECT brief.brief_date FROM daily_briefs brief
+     WHERE brief.status = 'published'
+     ORDER BY brief.brief_date DESC
+     LIMIT 1
+  )
+  ORDER BY exemption.thesis_id`;
 
 /**
  * The query-plan regression imports this exact projection so a later query
@@ -223,12 +243,14 @@ export class D1PublicReadModelRepository implements PublicReadModelRepository {
             WHERE source.enabled = 1
             ORDER BY source.id`,
         ),
+        this.database.prepare(LATEST_DAILY_BRIEF_COVERAGE_GAPS_QUERY),
       ]);
       if (!Array.isArray(results) || results.length !== OVERVIEW_STATEMENT_COUNT) throw new ReadModelStorageError();
       const briefRows = rows(results[0]);
       const thesisRows = rows(results[1]);
       const changeRows = rows(results[2]);
       const sourceRows = rows(results[3]);
+      const coverageGapRows = rows(results[4]);
       if (briefRows.length > 1) throw new ReadModelStorageError();
 
       const brief = briefRows[0] === undefined ? null : decodeBrief(briefRows[0]);
@@ -240,6 +262,7 @@ export class D1PublicReadModelRepository implements PublicReadModelRepository {
         enso: theses.find((thesis) => thesis.id === "ENSO-CORE-01") ?? null,
         topChanges: changeRows.map(decodeChange),
         theses,
+        coverageGaps: decodeCoverageGaps(coverageGapRows),
         sourceHealth: health.counts,
         freshness: health.freshness,
       });
@@ -441,25 +464,33 @@ export class D1PublicReadModelRepository implements PublicReadModelRepository {
   async methodology(generatedAt: string): Promise<MethodologyPageModel> {
     assertCanonicalUtc(generatedAt);
     try {
-      const result = await this.database.prepare(
-        `SELECT brief.published_at,
-                (SELECT link.methodology_version
-                   FROM daily_brief_theses link
-                  WHERE link.brief_date = brief.brief_date
-                  ORDER BY link.sort_order
-                  LIMIT 1) AS methodology_version
-           FROM daily_briefs brief
-          WHERE brief.status = 'published'
-          ORDER BY brief.brief_date DESC
-          LIMIT 1`,
-      ).all<Record<string, unknown>>();
-      const methodRows = rows(result);
+      const results = await this.database.batch<Record<string, unknown>>([
+        this.database.prepare(
+          `SELECT brief.published_at,
+                  (SELECT link.methodology_version
+                     FROM daily_brief_theses link
+                    WHERE link.brief_date = brief.brief_date
+                    ORDER BY link.sort_order
+                    LIMIT 1) AS methodology_version
+             FROM daily_briefs brief
+            WHERE brief.status = 'published'
+            ORDER BY brief.brief_date DESC
+            LIMIT 1`,
+        ),
+        this.database.prepare(LATEST_DAILY_BRIEF_COVERAGE_GAPS_QUERY),
+      ]);
+      if (!Array.isArray(results) || results.length !== METHODOLOGY_STATEMENT_COUNT) {
+        throw new ReadModelStorageError();
+      }
+      const methodRows = rows(results[0]);
+      const coverageGapRows = rows(results[1]);
       if (methodRows.length > 1) throw new ReadModelStorageError();
       const published = methodRows[0] === undefined ? null : decodeMethodologyVersion(methodRows[0]);
       return deepFreeze({
         methodologyVersion: published?.methodologyVersion ?? "unavailable",
         lastUpdatedAt: published?.lastUpdatedAt ?? generatedAt,
         sections: METHODOLOGY_SECTIONS,
+        coverageGaps: decodeCoverageGaps(coverageGapRows),
       });
     } catch (error) {
       if (error instanceof ReadModelStorageError) throw error;
@@ -1295,6 +1326,29 @@ function decodeMethodologyVersion(row: Record<string, unknown>): {
     methodologyVersion: nullableString(item.methodology_version) ?? "unavailable",
     lastUpdatedAt: canonicalUtc(item.published_at),
   };
+}
+
+/**
+ * 路径①：豁免论点只公开覆盖缺口文案，绝不携带方向或置信度字段。缺口文案来自种子；若某缺口
+ * 已被重命名，则回退到该论点级覆盖缺口说明，既不隐藏局限也不让整页失败。
+ */
+function decodeCoverageGaps(
+  rowsInput: readonly Record<string, unknown>[],
+): readonly PublicCoverageGapModel[] {
+  const seen = new Set<string>();
+  const gaps: PublicCoverageGapModel[] = [];
+  for (const row of rowsInput) {
+    const item = exactRecord(row, ["thesis_id", "gap_id", "title"]);
+    const thesisId = nonEmptyString(item.thesis_id);
+    if (seen.has(thesisId)) throw new ReadModelStorageError();
+    seen.add(thesisId);
+    const gapId = nonEmptyString(item.gap_id);
+    const title = nonEmptyString(item.title);
+    const gapDescription = coverageGapDescription(thesisId, gapId);
+    if (gapDescription === null) throw new ReadModelStorageError();
+    gaps.push({ thesisId, title, gapDescription });
+  }
+  return gaps;
 }
 
 function summarizeHealth(rowsInput: readonly Record<string, unknown>[], generatedAt: string): {

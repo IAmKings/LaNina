@@ -12,6 +12,8 @@ const MIGRATIONS = [
   "0006_public_category_projection.sql",
   "0007_admin_runs_projection.sql",
   "0008_admin_manual_source_runs.sql",
+  "0009_daily_brief_exemptions.sql",
+  "0010_daily_brief_exemptions_trigger.sql",
 ];
 
 const BASE_SEEDS = [

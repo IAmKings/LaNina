@@ -82,6 +82,7 @@ function result(briefDate: string, attemptId: string) {
     gates: [],
     sourceHealth: [],
     versions: [],
+    exemptions: [],
     publishedAt: null,
     publishedBy: null,
     attemptId,

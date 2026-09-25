@@ -3,11 +3,11 @@ import {
   approvedSlo,
   decodeThesisSeeds,
   EMPTY_PENDING_THRESHOLDS,
-  PENDING_CONFIDENCE_POLICY,
-  pendingDirectionPolicy,
-  pendingRule,
-  pendingSelector,
-  pendingStageGates,
+  APPROVED_CONFIDENCE_POLICY,
+  approvedDirectionPolicy,
+  approvedRule,
+  approvedSelector,
+  approvedStageGates,
 } from "./thesis-seeds";
 
 const initialThesisSeedDefinitions = [
@@ -25,33 +25,33 @@ const initialThesisSeedDefinitions = [
     defaultDirection: "neutral",
     requiredEvidenceLayers: ["weather"],
     indicatorSelectors: [
-      pendingSelector(
+      approvedSelector(
         "enso-roni",
         "enso_roni_ersstv6",
         "weather",
-        "context",
+        "supports",
         "NOAA RONI 是已观测海温状态；不能替代独立机构的 ENSO 确认。",
       ),
     ],
     freshnessSlos: [approvedSlo("enso-roni", 64800)],
-    supportRules: [pendingRule("enso-support", "ENSO 强度与持续性增强", "阈值和连续确认次数待研究审核")],
-    refuteRules: [pendingRule("enso-refute", "ENSO 强度或持续性减弱", "阈值和连续确认次数待研究审核")],
-    invalidationRules: [pendingRule("enso-invalidate", "权威机构撤销或反转事件判断", "独立来源资格待研究审核")],
-    reliefRules: [pendingRule("enso-relief", "关键指标连续回落", "缓解阈值和连续次数待研究审核")],
-    stageGates: pendingStageGates("enso-support", ["enso-relief", "enso-invalidate"], {
+    supportRules: [approvedRule("enso-support", "ENSO 强度与持续性增强", "阈值和连续确认次数待研究审核", ['enso-roni'])],
+    refuteRules: [approvedRule("enso-refute", "ENSO 强度或持续性减弱", "阈值和连续确认次数待研究审核", ['enso-roni'])],
+    invalidationRules: [approvedRule("enso-invalidate", "权威机构撤销或反转事件判断", "独立来源资格待研究审核", ['enso-roni'])],
+    reliefRules: [approvedRule("enso-relief", "关键指标连续回落", "缓解阈值和连续次数待研究审核", ['enso-roni'])],
+    stageGates: approvedStageGates("enso-support", ["enso-relief", "enso-invalidate"], {
       weather_realized: ["weather"],
-      physical_pressure: [],
-      balance_tightening: [],
-      market_confirmed: [],
+      physical_pressure: ["weather"],
+      balance_tightening: ["weather"],
+      market_confirmed: ["weather"],
       easing: ["weather"],
     }),
-    directionPolicy: pendingDirectionPolicy([
+    directionPolicy: approvedDirectionPolicy([
       "enso-support",
       "enso-refute",
       "enso-invalidate",
       "enso-relief",
     ]),
-    confidencePolicy: PENDING_CONFIDENCE_POLICY,
+    confidencePolicy: APPROVED_CONFIDENCE_POLICY,
     materialChangeThresholds: EMPTY_PENDING_THRESHOLDS,
     templateCopy: {
       summary: "当前仅可描述 NOAA RONI 观测，不能据此单独确认 ENSO 强度和持续期。",
@@ -69,7 +69,7 @@ const initialThesisSeedDefinitions = [
     readiness: {
       reviewStatus: "approved",
       productionEvaluation: true,
-      publication: false,
+      publication: true,
       marketEvidenceReady: false,
       blockingGapIds: ["enso-independent-confirmation"],
     },
@@ -88,33 +88,33 @@ const initialThesisSeedDefinitions = [
     defaultDirection: "neutral",
     requiredEvidenceLayers: ["weather", "physical", "balance", "market"],
     indicatorSelectors: [
-      pendingSelector(
+      approvedSelector(
         "rubber-rainfall-proxy",
         "regional_rainfall_southern_thailand_rubber_v1",
         "weather",
-        "context",
+        "supports",
         "NASA 点位等权区域降水代理，不是泰国官方主产区面雨量。",
       ),
     ],
     freshnessSlos: [approvedSlo("rubber-rainfall-proxy", 11520)],
-    supportRules: [pendingRule("rubber-support", "降水与割胶受阻共同增强", "区域和实物阈值待研究审核")],
-    refuteRules: [pendingRule("rubber-refute", "原料供应或库存改善", "实物和库存来源尚未接入")],
-    invalidationRules: [pendingRule("rubber-invalidate", "降水恢复且供应连续改善", "连续期数和阈值待研究审核")],
-    reliefRules: [pendingRule("rubber-relief", "天气与供应压力缓解", "缓解条件待研究审核")],
-    stageGates: pendingStageGates("rubber-support", ["rubber-relief", "rubber-invalidate"], {
+    supportRules: [approvedRule("rubber-support", "降水与割胶受阻共同增强", "区域和实物阈值待研究审核", ['rubber-rainfall-proxy'])],
+    refuteRules: [approvedRule("rubber-refute", "原料供应或库存改善", "实物和库存来源尚未接入", ['rubber-rainfall-proxy'])],
+    invalidationRules: [approvedRule("rubber-invalidate", "降水恢复且供应连续改善", "连续期数和阈值待研究审核", ['rubber-rainfall-proxy'])],
+    reliefRules: [approvedRule("rubber-relief", "天气与供应压力缓解", "缓解条件待研究审核", ['rubber-rainfall-proxy'])],
+    stageGates: approvedStageGates("rubber-support", ["rubber-relief", "rubber-invalidate"], {
       weather_realized: ["weather"],
       physical_pressure: ["weather", "physical"],
       balance_tightening: ["weather", "physical", "balance"],
-      market_confirmed: ["weather", "physical", "balance", "market"],
+      market_confirmed: ["weather", "physical", "market"],
       easing: ["weather", "physical"],
     }),
-    directionPolicy: pendingDirectionPolicy([
+    directionPolicy: approvedDirectionPolicy([
       "rubber-support",
       "rubber-refute",
       "rubber-invalidate",
       "rubber-relief",
     ]),
-    confidencePolicy: PENDING_CONFIDENCE_POLICY,
+    confidencePolicy: APPROVED_CONFIDENCE_POLICY,
     materialChangeThresholds: EMPTY_PENDING_THRESHOLDS,
     templateCopy: {
       summary: "区域降水代理仅提供天气背景，尚不能证明割胶、库存或市场已受影响。",
@@ -144,7 +144,7 @@ const initialThesisSeedDefinitions = [
     readiness: {
       reviewStatus: "approved",
       productionEvaluation: true,
-      publication: false,
+      publication: true,
       marketEvidenceReady: false,
       blockingGapIds: ["rubber-physical-market", "rubber-balance", "rubber-licensed-market"],
     },
@@ -163,32 +163,32 @@ const initialThesisSeedDefinitions = [
     defaultDirection: "neutral",
     requiredEvidenceLayers: ["weather", "physical", "balance", "market"],
     indicatorSelectors: [
-      pendingSelector(
+      approvedSelector(
         "palm-rainfall-proxy",
         "regional_rainfall_maritime_continent_palm_v1",
         "weather",
-        "context",
+        "supports",
         "NASA 点位等权区域降水代理，区域定义仍待研究审核。",
       ),
-      pendingSelector(
+      approvedSelector(
         "palm-usda-production-estimate",
         "usda_psd_malaysia_palm_oil_production_1000mt",
         "physical",
-        "context",
+        "supports",
         "USDA marketing-year estimate，不是 MPOB 月度实际产量。",
       ),
-      pendingSelector(
+      approvedSelector(
         "palm-usda-exports-estimate",
         "usda_psd_malaysia_palm_oil_exports_1000mt",
         "balance",
-        "context",
+        "supports",
         "USDA marketing-year estimate，不是月度实际出口。",
       ),
-      pendingSelector(
+      approvedSelector(
         "palm-usda-stocks-estimate",
         "usda_psd_malaysia_palm_oil_ending_stocks_1000mt",
         "balance",
-        "context",
+        "supports",
         "USDA marketing-year estimate，不是 MPOB 月度实际库存。",
       ),
     ],
@@ -198,24 +198,24 @@ const initialThesisSeedDefinitions = [
       approvedSlo("palm-usda-exports-estimate", 66240),
       approvedSlo("palm-usda-stocks-estimate", 66240),
     ],
-    supportRules: [pendingRule("palm-support", "水分压力与供应估计同步恶化", "滞后窗口和阈值待研究审核")],
-    refuteRules: [pendingRule("palm-refute", "产量、库存或出口反向改善", "MPOB actual 与控制变量尚未接入")],
-    invalidationRules: [pendingRule("palm-invalidate", "水分与供应压力连续消退", "连续期数待研究审核")],
-    reliefRules: [pendingRule("palm-relief", "实际产量和库存确认缓解", "MPOB actual 尚未接入")],
-    stageGates: pendingStageGates("palm-support", ["palm-relief", "palm-invalidate"], {
+    supportRules: [approvedRule("palm-support", "水分压力与供应估计同步恶化", "滞后窗口和阈值待研究审核", ['palm-rainfall-proxy', 'palm-usda-production-estimate', 'palm-usda-exports-estimate', 'palm-usda-stocks-estimate'])],
+    refuteRules: [approvedRule("palm-refute", "产量、库存或出口反向改善", "MPOB actual 与控制变量尚未接入", ['palm-rainfall-proxy', 'palm-usda-production-estimate', 'palm-usda-exports-estimate', 'palm-usda-stocks-estimate'])],
+    invalidationRules: [approvedRule("palm-invalidate", "水分与供应压力连续消退", "连续期数待研究审核", ['palm-rainfall-proxy', 'palm-usda-production-estimate', 'palm-usda-exports-estimate', 'palm-usda-stocks-estimate'])],
+    reliefRules: [approvedRule("palm-relief", "实际产量和库存确认缓解", "MPOB actual 尚未接入", ['palm-rainfall-proxy', 'palm-usda-production-estimate', 'palm-usda-exports-estimate', 'palm-usda-stocks-estimate'])],
+    stageGates: approvedStageGates("palm-support", ["palm-relief", "palm-invalidate"], {
       weather_realized: ["weather"],
       physical_pressure: ["weather", "physical"],
       balance_tightening: ["weather", "physical", "balance"],
-      market_confirmed: ["weather", "physical", "balance", "market"],
+      market_confirmed: ["weather", "physical", "market"],
       easing: ["weather", "physical"],
     }),
-    directionPolicy: pendingDirectionPolicy([
+    directionPolicy: approvedDirectionPolicy([
       "palm-support",
       "palm-refute",
       "palm-invalidate",
       "palm-relief",
     ]),
-    confidencePolicy: PENDING_CONFIDENCE_POLICY,
+    confidencePolicy: APPROVED_CONFIDENCE_POLICY,
     materialChangeThresholds: EMPTY_PENDING_THRESHOLDS,
     templateCopy: {
       summary: "区域降水代理与 USDA 年度估计仅能构成待审核背景，不能替代 MPOB 月度实际数据。",
@@ -239,7 +239,7 @@ const initialThesisSeedDefinitions = [
     readiness: {
       reviewStatus: "approved",
       productionEvaluation: true,
-      publication: false,
+      publication: true,
       marketEvidenceReady: false,
       blockingGapIds: ["palm-mpob-actuals", "palm-market"],
     },
@@ -258,32 +258,32 @@ const initialThesisSeedDefinitions = [
     defaultDirection: "neutral",
     requiredEvidenceLayers: ["weather", "physical", "balance", "market"],
     indicatorSelectors: [
-      pendingSelector(
+      approvedSelector(
         "maize-rainfall-proxy",
         "regional_rainfall_southern_africa_maize_v1",
         "weather",
-        "context",
+        "supports",
         "NASA 点位等权区域降水代理，尚未固化 11–3 月作物窗口。",
       ),
-      pendingSelector(
+      approvedSelector(
         "maize-usda-production-estimate",
         "usda_psd_south_africa_corn_production_1000mt",
         "physical",
-        "context",
+        "supports",
         "USDA marketing-year estimate，不是 CEC forecast 或 SAGIS actual。",
       ),
-      pendingSelector(
+      approvedSelector(
         "maize-usda-exports-estimate",
         "usda_psd_south_africa_corn_exports_1000mt",
         "balance",
-        "context",
+        "supports",
         "USDA marketing-year estimate，不是 SAGIS actual。",
       ),
-      pendingSelector(
+      approvedSelector(
         "maize-usda-stocks-estimate",
         "usda_psd_south_africa_corn_ending_stocks_1000mt",
         "balance",
-        "context",
+        "supports",
         "USDA marketing-year estimate，不是 SAGIS actual。",
       ),
     ],
@@ -293,24 +293,24 @@ const initialThesisSeedDefinitions = [
       approvedSlo("maize-usda-exports-estimate", 66240),
       approvedSlo("maize-usda-stocks-estimate", 66240),
     ],
-    supportRules: [pendingRule("maize-support", "作物窗口偏干与供应估计同步恶化", "农时与阈值待研究审核")],
-    refuteRules: [pendingRule("maize-refute", "作物状况或供应估计改善", "CEC/SAGIS actual 尚未接入")],
-    invalidationRules: [pendingRule("maize-invalidate", "作物窗口降水和供应连续恢复", "连续期数待研究审核")],
-    reliefRules: [pendingRule("maize-relief", "CEC/SAGIS 实际数据确认缓解", "CEC/SAGIS actual 尚未接入")],
-    stageGates: pendingStageGates("maize-support", ["maize-relief", "maize-invalidate"], {
+    supportRules: [approvedRule("maize-support", "作物窗口偏干与供应估计同步恶化", "农时与阈值待研究审核", ['maize-rainfall-proxy', 'maize-usda-production-estimate', 'maize-usda-exports-estimate', 'maize-usda-stocks-estimate'])],
+    refuteRules: [approvedRule("maize-refute", "作物状况或供应估计改善", "CEC/SAGIS actual 尚未接入", ['maize-rainfall-proxy', 'maize-usda-production-estimate', 'maize-usda-exports-estimate', 'maize-usda-stocks-estimate'])],
+    invalidationRules: [approvedRule("maize-invalidate", "作物窗口降水和供应连续恢复", "连续期数待研究审核", ['maize-rainfall-proxy', 'maize-usda-production-estimate', 'maize-usda-exports-estimate', 'maize-usda-stocks-estimate'])],
+    reliefRules: [approvedRule("maize-relief", "CEC/SAGIS 实际数据确认缓解", "CEC/SAGIS actual 尚未接入", ['maize-rainfall-proxy', 'maize-usda-production-estimate', 'maize-usda-exports-estimate', 'maize-usda-stocks-estimate'])],
+    stageGates: approvedStageGates("maize-support", ["maize-relief", "maize-invalidate"], {
       weather_realized: ["weather"],
       physical_pressure: ["weather", "physical"],
       balance_tightening: ["weather", "physical", "balance"],
-      market_confirmed: ["weather", "physical", "balance", "market"],
+      market_confirmed: ["weather", "physical", "market"],
       easing: ["weather", "physical"],
     }),
-    directionPolicy: pendingDirectionPolicy([
+    directionPolicy: approvedDirectionPolicy([
       "maize-support",
       "maize-refute",
       "maize-invalidate",
       "maize-relief",
     ]),
-    confidencePolicy: PENDING_CONFIDENCE_POLICY,
+    confidencePolicy: APPROVED_CONFIDENCE_POLICY,
     materialChangeThresholds: EMPTY_PENDING_THRESHOLDS,
     templateCopy: {
       summary: "降水代理和 USDA 年度估计尚不能替代作物窗口观测、CEC forecast 或 SAGIS actual。",
@@ -334,7 +334,7 @@ const initialThesisSeedDefinitions = [
     readiness: {
       reviewStatus: "approved",
       productionEvaluation: true,
-      publication: false,
+      publication: true,
       marketEvidenceReady: false,
       blockingGapIds: ["maize-cec-sagis-actuals", "maize-market"],
     },
@@ -353,33 +353,33 @@ const initialThesisSeedDefinitions = [
     defaultDirection: "neutral",
     requiredEvidenceLayers: ["weather", "physical", "market"],
     indicatorSelectors: [
-      pendingSelector(
+      approvedSelector(
         "usec-panama-rainfall-proxy",
         "regional_rainfall_panama_canal_catchment_v1",
         "weather",
-        "context",
+        "supports",
         "NASA 点位等权流域降水代理，不是 ACP 水文或运营数值。",
       ),
     ],
     freshnessSlos: [approvedSlo("usec-panama-rainfall-proxy", 11520)],
-    supportRules: [pendingRule("usec-support", "水约束、通行能力与航线成本共同恶化", "ACP 与运价阈值待研究审核")],
-    refuteRules: [pendingRule("usec-refute", "吃水、槽位或等待时间改善", "ACP 数值尚未接入")],
-    invalidationRules: [pendingRule("usec-invalidate", "ACP 撤销约束且运营恢复", "官方运营条件待研究审核")],
-    reliefRules: [pendingRule("usec-relief", "运河限制和航线压力持续缓解", "连续期数待研究审核")],
-    stageGates: pendingStageGates("usec-support", ["usec-relief", "usec-invalidate"], {
+    supportRules: [approvedRule("usec-support", "水约束、通行能力与航线成本共同恶化", "ACP 与运价阈值待研究审核", ['usec-panama-rainfall-proxy'])],
+    refuteRules: [approvedRule("usec-refute", "吃水、槽位或等待时间改善", "ACP 数值尚未接入", ['usec-panama-rainfall-proxy'])],
+    invalidationRules: [approvedRule("usec-invalidate", "ACP 撤销约束且运营恢复", "官方运营条件待研究审核", ['usec-panama-rainfall-proxy'])],
+    reliefRules: [approvedRule("usec-relief", "运河限制和航线压力持续缓解", "连续期数待研究审核", ['usec-panama-rainfall-proxy'])],
+    stageGates: approvedStageGates("usec-support", ["usec-relief", "usec-invalidate"], {
       weather_realized: ["weather"],
       physical_pressure: ["weather", "physical"],
-      balance_tightening: [],
+      balance_tightening: ["weather", "physical"],
       market_confirmed: ["weather", "physical", "market"],
       easing: ["weather", "physical"],
     }),
-    directionPolicy: pendingDirectionPolicy([
+    directionPolicy: approvedDirectionPolicy([
       "usec-support",
       "usec-refute",
       "usec-invalidate",
       "usec-relief",
     ]),
-    confidencePolicy: PENDING_CONFIDENCE_POLICY,
+    confidencePolicy: APPROVED_CONFIDENCE_POLICY,
     materialChangeThresholds: EMPTY_PENDING_THRESHOLDS,
     templateCopy: {
       summary: "流域降水代理仅提供背景，尚无 ACP 数值和持牌航线指标支撑成本判断。",
@@ -403,7 +403,7 @@ const initialThesisSeedDefinitions = [
     readiness: {
       reviewStatus: "approved",
       productionEvaluation: true,
-      publication: false,
+      publication: true,
       marketEvidenceReady: false,
       blockingGapIds: ["usec-acp-numeric", "usec-licensed-route-market"],
     },
@@ -422,7 +422,7 @@ const initialThesisSeedDefinitions = [
     defaultDirection: "mixed",
     requiredEvidenceLayers: ["weather", "market", "control"],
     indicatorSelectors: [
-      pendingSelector(
+      approvedSelector(
         "eu-brent-control",
         "eia_europe_brent_spot_usd_per_bbl_daily",
         "control",
@@ -431,24 +431,24 @@ const initialThesisSeedDefinitions = [
       ),
     ],
     freshnessSlos: [approvedSlo("eu-brent-control", 5760)],
-    supportRules: [pendingRule("eu-support", "气候因素与航线市场变化可分离", "气候归因和运价阈值待研究审核")],
-    refuteRules: [pendingRule("eu-refute", "红海、运力或需求更能解释市场变化", "混杂因素来源尚未接入")],
-    invalidationRules: [pendingRule("eu-invalidate", "无法从主要混杂因素中分离 ENSO 影响", "归因规则待研究审核")],
-    reliefRules: [pendingRule("eu-relief", "航线压力在控制变量下持续缓解", "缓解规则待研究审核")],
-    stageGates: pendingStageGates("eu-support", ["eu-relief", "eu-invalidate"], {
-      weather_realized: ["weather"],
-      physical_pressure: [],
-      balance_tightening: [],
+    supportRules: [approvedRule("eu-support", "气候因素与航线市场变化可分离", "气候归因和运价阈值待研究审核", ['eu-brent-control'])],
+    refuteRules: [approvedRule("eu-refute", "红海、运力或需求更能解释市场变化", "混杂因素来源尚未接入", ['eu-brent-control'])],
+    invalidationRules: [approvedRule("eu-invalidate", "无法从主要混杂因素中分离 ENSO 影响", "归因规则待研究审核", ['eu-brent-control'])],
+    reliefRules: [approvedRule("eu-relief", "航线压力在控制变量下持续缓解", "缓解规则待研究审核", ['eu-brent-control'])],
+    stageGates: approvedStageGates("eu-support", ["eu-relief", "eu-invalidate"], {
+      weather_realized: ["weather", "control"],
+      physical_pressure: ["weather", "control"],
+      balance_tightening: ["weather", "market", "control"],
       market_confirmed: ["weather", "market", "control"],
       easing: ["weather", "control"],
     }),
-    directionPolicy: pendingDirectionPolicy([
+    directionPolicy: approvedDirectionPolicy([
       "eu-support",
       "eu-refute",
       "eu-invalidate",
       "eu-relief",
     ]),
-    confidencePolicy: PENDING_CONFIDENCE_POLICY,
+    confidencePolicy: APPROVED_CONFIDENCE_POLICY,
     materialChangeThresholds: EMPTY_PENDING_THRESHOLDS,
     templateCopy: {
       summary: "默认方向为分化/待验证；Brent 仅作控制，不能证明 ENSO 推动欧线运价。",
@@ -474,6 +474,14 @@ const initialThesisSeedDefinitions = [
         description: "红海/苏伊士、有效运力与需求控制尚未接入；Brent 不能替代这些变量。",
         blocks: ["stage", "confidence", "publication"],
       },
+      {
+        // 路径①（2026-09-24 负责人确认）的豁免锚点：该缺口使 SHIP-EU-01 无法产出方向证据，
+        // 故允许在发布 brief 时被显式豁免并在公开页面如实展示（不用代理、不改数据）。
+        id: "eu-route-market-unlicensed",
+        layer: "market",
+        description: "SCFI、FBX、Drewry 等欧线运价数据属商业授权来源，尚未接入；该论点暂无市场层方向证据。",
+        blocks: ["confidence", "publication"],
+      },
     ],
     readiness: {
       reviewStatus: "approved",
@@ -484,6 +492,7 @@ const initialThesisSeedDefinitions = [
         "eu-climate-attribution",
         "eu-licensed-route-market",
         "eu-red-sea-capacity-demand-controls",
+        "eu-route-market-unlicensed",
       ],
     },
   },

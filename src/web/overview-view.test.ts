@@ -150,6 +150,7 @@ function publishedOverview(): OverviewPageModel {
       publicChange("change-3", "欧洲航线风险溢价回落。"),
     ],
     theses,
+    coverageGaps: [],
     sourceHealth: { healthy: 5, delayed: 1, stale: 0, broken: 0 },
     freshness: "current",
   };

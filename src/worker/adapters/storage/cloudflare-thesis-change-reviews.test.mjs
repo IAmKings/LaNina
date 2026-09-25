@@ -188,6 +188,7 @@ function readyDatabase() {
     "0003_thesis_draft_idempotency.sql",
     "0004_thesis_publication_state.sql",
     "0005_daily_brief_freeze.sql",
+    "0009_daily_brief_exemptions.sql",
   ]) applyMigration(database, migration);
   database.exec(readFile("seeds/0001_theses.sql"));
   database.exec(

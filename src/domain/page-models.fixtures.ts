@@ -102,6 +102,11 @@ const fixtures: PageModelFixtures = {
       source: SOURCE,
     }],
     theses: [ENSO_CARD, RUBBER_CARD],
+    coverageGaps: [{
+      thesisId: "SHIP-EU-01",
+      title: "欧线航运市场确认",
+      gapDescription: "SCFI、FBX、Drewry 等欧线运价数据属商业授权来源，尚未接入。",
+    }],
     sourceHealth: { healthy: 2, delayed: 0, stale: 0, broken: 0 },
     freshness: "current",
   },
@@ -111,6 +116,7 @@ const fixtures: PageModelFixtures = {
     enso: ENSO_CARD,
     topChanges: [],
     theses: [{ ...RUBBER_CARD, freshness: "stale" }],
+    coverageGaps: [],
     sourceHealth: { healthy: 0, delayed: 0, stale: 1, broken: 1 },
     freshness: "stale",
   },
@@ -198,6 +204,7 @@ const fixtures: PageModelFixtures = {
       title: "置信度",
       summary: "置信度描述证据质量，不代表价格方向概率或交易胜率。",
     }],
+    coverageGaps: [],
   },
   adminRuns: {
     actor: { email: "researcher@example.test", roles: ["viewer", "editor"] },

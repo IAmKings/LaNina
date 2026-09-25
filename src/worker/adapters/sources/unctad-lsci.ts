@@ -74,9 +74,12 @@ export function createUnctadLsciAdapter(
         throw new SourceCollectionError("VALIDATION", "UNCTAD 窗口内没有可落库的月度观测");
       }
 
-      const contentHash = await sha256Hex(new TextEncoder().encode(
-        observations.map((o) => `${o.observedAt}:${o.value}`).join("|"),
-      ));
+      if (lastRawBody === null) {
+        throw new SourceCollectionError("STORAGE", "UNCTAD 响应正文缺失，无法计算内容哈希");
+      }
+      // contentHash 必须是**原始正文**的 SHA-256：R2 条件写把它当作校验和比对实际字节，
+      // 用派生摘要（观测拼接）会被 R2 拒绝（本地 miniflare 不校验校验和，故只在真实 R2 暴露）。
+      const contentHash = await sha256Hex(lastRawBody);
 
       return {
         sourceId: context.sourceId,

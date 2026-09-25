@@ -557,7 +557,11 @@ export class R2RawSnapshotStore implements RawSnapshotStore {
       return key;
     } catch (error) {
       if (error instanceof SourceCollectionError) throw error;
-      throw new SourceCollectionError("STORAGE", "无法写入私有原始快照", { retryable: true });
+      // 透传 cause：R2 的真实拒绝原因（条件写冲突 / 体积 / 元数据）只在日志可见。
+      throw new SourceCollectionError("STORAGE", "无法写入私有原始快照", {
+        retryable: true,
+        cause: error,
+      });
     }
   }
 }

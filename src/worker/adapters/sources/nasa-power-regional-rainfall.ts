@@ -96,10 +96,10 @@ export const nasaPowerRegionalRainfallAdapter: SourceAdapter = {
       try {
         response = await context.fetch(requestUrl, {
           headers: { Accept: "application/json" },
-          redirect: "error",
+          redirect: "manual",
         });
-      } catch {
-        throw new SourceCollectionError("NETWORK", "无法连接 NASA POWER", { retryable: true });
+      } catch (error) {
+        throw new SourceCollectionError("NETWORK", "无法连接 NASA POWER", { retryable: true, cause: error });
       }
       if (!response.ok) throw errorForResponse(response);
       const contentType = response.headers.get("content-type");

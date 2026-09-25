@@ -29,6 +29,12 @@ export interface ApiErrorEnvelope {
     code: string;
     message: string;
     requestId: string;
+    /**
+     * Stable, non-prose diagnostic payload for operator-facing failures. It carries enum codes only
+     * (for example the failed daily-brief gates and their reason codes), never raw SQL or storage
+     * internals, so the browser can explain a failure without rendering a server message verbatim.
+     */
+    details?: unknown;
   };
 }
 

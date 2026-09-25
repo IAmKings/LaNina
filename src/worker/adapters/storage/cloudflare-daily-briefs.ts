@@ -1,6 +1,7 @@
 import { reportStorageFailure } from "./storage-logging";
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "../../../domain/contracts";
 import type {
+  DailyBriefExemption,
   DailyBriefFrozenVersionFact,
   DailyBriefGateResult,
   DailyBriefResult,
@@ -14,13 +15,15 @@ import {
   REQUIRED_DAILY_THESIS_IDS,
   dailyBriefFreezeKey,
   evaluateDailyBriefGates,
+  highRiskTriggers,
 } from "../../../domain/daily-brief";
 import { SOURCE_ERROR_CODES } from "../../../domain/ingestion";
 import { calculateSourceHealth } from "../../ingestion/source-health";
 import type { DailyBriefMutation, DailyBriefRepository } from "../../modules/daily-briefs";
 import { DailyBriefError } from "../../modules/daily-briefs";
 
-const READ_FACT_STATEMENT_COUNT = 5;
+const READ_FACT_STATEMENT_COUNT = 6;
+const PUBLISHED_READ_STATEMENT_COUNT = 5;
 const LEGACY_DAILY_BRIEF_FREEZE_PREFIX = "daily-brief-freeze-legacy-v1:";
 
 interface VersionGuard {
@@ -71,6 +74,17 @@ interface PreviousBriefGuard {
   readonly confidence: number;
 }
 
+/**
+ * A high-risk transition that still needs a recorded review before the daily brief can publish.
+ * Exposing this lets an operator record the exact previous/target binding without inspecting D1.
+ */
+export interface PendingReviewObligation {
+  readonly thesisId: RequiredDailyThesisId;
+  readonly afterVersionId: string;
+  readonly beforeVersionId: string;
+  readonly triggers: readonly string[];
+}
+
 export class D1DailyBriefRepository implements DailyBriefRepository {
   constructor(private readonly database: D1Database) {}
 
@@ -83,6 +97,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
         targets: mutation.targets,
         versions: facts.versions,
         sourceHealth: facts.sourceHealth,
+        exemptions: mutation.exemptions,
       });
       const freezeKey = await dailyBriefFreezeKey({
         briefDate: mutation.briefDate,
@@ -93,6 +108,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
         topChanges: mutation.topChanges,
         versions: facts.versions,
         sourceHealth: facts.sourceHealth,
+        exemptions: mutation.exemptions,
       });
 
       const exact = await this.findAttemptByFreezeKey(freezeKey);
@@ -154,6 +170,53 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
     }
   }
 
+  /**
+   * 高风险转场审核待办（相对上一期已发布 brief）。只回传稳定的论点/版本身份与触发枚举，供后台在
+   * 发布前记录精确审核；不参与冻结计算，也不替代任何研究判断。
+   */
+  async findPendingReviewObligations(
+    briefDate: string,
+    versionIds: readonly string[],
+  ): Promise<readonly PendingReviewObligation[]> {
+    if (versionIds.length === 0) return [];
+    try {
+      calendarDate(briefDate);
+      const placeholders = versionIds.map(() => "?").join(", ");
+      const result = await this.database.prepare(
+        `SELECT target.thesis_id, target.id AS thesis_version_id,
+                target.direction, target.stage, target.confidence,
+                prior.thesis_version_id AS before_version_id,
+                prior_version.direction AS prior_direction,
+                prior_version.stage AS prior_stage,
+                prior_version.confidence AS prior_confidence,
+                matched_review.status AS matched_review_status
+           FROM thesis_versions target
+           LEFT JOIN daily_brief_theses prior
+             ON prior.thesis_id = target.thesis_id
+            AND prior.brief_date = (
+              SELECT MAX(brief.brief_date) FROM daily_briefs brief
+               WHERE brief.status = 'published' AND brief.brief_date < ?
+            )
+           LEFT JOIN thesis_versions prior_version
+             ON prior_version.id = prior.thesis_version_id
+            AND prior_version.thesis_id = prior.thesis_id
+           LEFT JOIN thesis_change_reviews matched_review
+             ON matched_review.after_version_id = target.id
+            AND matched_review.thesis_id = target.thesis_id
+            AND matched_review.before_version_id = prior.thesis_version_id
+            AND matched_review.status = 'approved'
+          WHERE target.id IN (${placeholders})
+          ORDER BY target.thesis_id`,
+      ).bind(briefDate, ...versionIds).all<Record<string, unknown>>();
+      if (result.success !== true || !Array.isArray(result.results)) throw databaseError();
+      return deepFreeze(result.results.flatMap(decodePendingReviewObligation));
+    } catch (error) {
+      if (error instanceof DailyBriefError) throw error;
+      reportStorageFailure("daily-briefs.findPendingReviewObligations", error);
+      throw databaseError();
+    }
+  }
+
   async findPublished(briefDate: string): Promise<DailyBriefResult | null> {
     try {
       calendarDate(briefDate);
@@ -189,20 +252,28 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
             LIMIT 1`,
         ).bind(briefDate),
         this.gatesForBriefStatement(briefDate),
+        this.exemptionsForBriefStatement(briefDate),
       ]);
-      if (!Array.isArray(results) || results.length !== 4) throw databaseError();
+      if (!Array.isArray(results) || results.length !== PUBLISHED_READ_STATEMENT_COUNT) throw databaseError();
       const briefRows = queryRows(results[0]);
       const linkRows = queryRows(results[1]);
       const attemptRows = queryRows(results[2]);
       const gateRows = queryRows(results[3]);
+      const exemptionRows = queryRows(results[4]);
       if (briefRows.length === 0) {
-        if (linkRows.length !== 0 || attemptRows.length !== 0 || gateRows.length !== 0) {
+        if (
+          linkRows.length !== 0
+          || attemptRows.length !== 0
+          || gateRows.length !== 0
+          || exemptionRows.length !== 0
+        ) {
           throw databaseError();
         }
         return null;
       }
       if (briefRows.length !== 1 || attemptRows.length !== 1) throw databaseError();
-      const result = decodePublishedResult(briefRows[0]!, linkRows, attemptRows[0]!, gateRows);
+      const exemptions = decodeExemptions(exemptionRows);
+      const result = decodePublishedResult(briefRows[0]!, linkRows, attemptRows[0]!, gateRows, exemptions);
       if (result.briefDate !== briefDate) throw databaseError();
       return result;
     } catch (error) {
@@ -321,6 +392,17 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
           WHERE review.after_version_id IN (${placeholders})
           ORDER BY review.thesis_id`,
       ).bind(...versionIds),
+      this.database.prepare(
+        `WITH previous_brief AS (
+           SELECT MAX(brief_date) AS brief_date
+             FROM daily_briefs
+            WHERE status = 'published' AND brief_date < ?
+         )
+         SELECT exemption.thesis_id, exemption.gap_id
+           FROM daily_brief_exemptions exemption
+           JOIN previous_brief ON previous_brief.brief_date = exemption.brief_date
+          ORDER BY exemption.thesis_id`,
+      ).bind(mutation.briefDate),
     ]);
     if (!Array.isArray(results) || results.length !== READ_FACT_STATEMENT_COUNT) throw databaseError();
     const versionRows = queryRows(results[0]);
@@ -328,9 +410,11 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
     const sourceRows = queryRows(results[2]);
     const previousRows = queryRows(results[3]);
     const reviewRows = queryRows(results[4]);
+    const previousExemptionRows = queryRows(results[5]);
 
     const citations = decodeCitations(evidenceRows, new Set(versionIds));
-    const previous = decodePrevious(previousRows);
+    const previousExemptions = decodeExemptions(previousExemptionRows);
+    const previous = decodePrevious(previousRows, previousExemptions);
     const reviews = decodeReviews(reviewRows, new Set(versionIds), mutation.occurredAt);
     const versions = versionRows.map((row) =>
       decodeVersionFact(row, mutation.targets, mutation.cutoff, citations, previous, reviews),
@@ -362,14 +446,24 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
       this.attemptStatement(mutation, freezeKey, "delayed", sourceHealth, versions),
       ...gates.map((gate) => this.gateStatement(mutation.attemptId, gate)),
     ];
+    const stages = ["attempt", ...gates.map((gate) => `gate:${gate.code}`)];
     try {
-      assertWriteBatch(await this.database.batch(statements), statements.length);
-    } catch {
+      assertWriteBatch(await this.database.batch(statements), stages);
+    } catch (error) {
       const raced = await this.findAttemptByFreezeKey(freezeKey);
       if (raced !== null) return raced;
       const current = await this.findLatestAttempt(mutation.briefDate);
-      if (current !== null) throw conflict(mutation.expectedFreezeKey, current.freezeKey);
-      throw databaseError();
+      if (current !== null && mutation.expectedFreezeKey !== current.freezeKey) {
+        throw conflict(mutation.expectedFreezeKey, current.freezeKey);
+      }
+      // Freeze keys agree, so this is not a concurrency race: report the guarded stage that failed.
+      const staged = guardedStageError(error);
+      if (staged !== null) {
+        reportStorageFailure("daily-briefs.writeDelayed", error);
+        throw staged;
+      }
+      reportStorageFailure("daily-briefs.writeDelayed", error);
+      throw error instanceof DailyBriefError ? error : databaseError({ stage: "batch" });
     }
     return deepFreeze({
       briefDate: mutation.briefDate,
@@ -382,6 +476,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
       gates,
       sourceHealth,
       versions,
+      exemptions: [],
       publishedAt: null,
       publishedBy: null,
       attemptId: mutation.attemptId,
@@ -400,7 +495,9 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
     reviewGuards: readonly ReviewGuard[],
     previousGuards: readonly PreviousBriefGuard[],
   ): Promise<DailyBriefResult> {
-    if (versions.length !== REQUIRED_DAILY_THESIS_IDS.length) throw databaseError();
+    if (versions.length + mutation.exemptions.length !== REQUIRED_DAILY_THESIS_IDS.length) {
+      throw databaseError();
+    }
     const methodologySnapshot = versions.map(({ thesisId, methodologyVersion }) => ({
       thesisId, methodologyVersion,
     }));
@@ -451,6 +548,28 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
         version.thesisVersionId,
         version.thesisId,
       )),
+      // 路径①：豁免行必须先于 `status = 'published'` 写入，0010 的发布触发器才能看到
+      // 「已发布版本 + 已登记豁免 = 6」。写入条件与随后的 UPDATE 完全一致（同一 draft /
+      // freeze_key / attempt），因此两者要么都生效，要么都写 0 行，不会留下孤儿豁免。
+      ...mutation.exemptions.map((exemption) => this.database.prepare(
+        `INSERT INTO daily_brief_exemptions (
+           brief_date, thesis_id, gap_id, acknowledged_by, acknowledged_at
+         ) SELECT ?, ?, ?, ?, ?
+            WHERE EXISTS (
+              SELECT 1 FROM daily_briefs brief
+               WHERE brief.brief_date = ? AND brief.status = 'draft'
+                 AND brief.freeze_key = ? AND brief.publication_attempt_id = ?
+            )`,
+      ).bind(
+        mutation.briefDate,
+        exemption.thesisId,
+        exemption.gapId,
+        mutation.actor,
+        mutation.occurredAt,
+        mutation.briefDate,
+        freezeKey,
+        mutation.attemptId,
+      )),
       this.database.prepare(
         `UPDATE daily_briefs
             SET status = 'published', published_at = ?, published_by = ?
@@ -461,7 +580,15 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
         `INSERT INTO audit_log (
            id, entity_type, entity_id, action, actor, reason, before_json, after_json, created_at
          ) SELECT ?, 'daily_brief', brief.brief_date, 'publish', ?, ?, NULL,
-                  json_object('freezeKey', brief.freeze_key, 'attemptId', brief.publication_attempt_id), ?
+                  json_object(
+                    'freezeKey', brief.freeze_key,
+                    'attemptId', brief.publication_attempt_id,
+                    'exemptions', (
+                      SELECT json_group_array(json_object('thesisId', exemption.thesis_id, 'gapId', exemption.gap_id))
+                        FROM daily_brief_exemptions exemption
+                       WHERE exemption.brief_date = brief.brief_date
+                    )
+                  ), ?
              FROM daily_briefs brief
             WHERE brief.brief_date = ? AND brief.status = 'published'
               AND brief.freeze_key = ? AND brief.publication_attempt_id = ?`,
@@ -475,14 +602,35 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
         mutation.attemptId,
       ),
     ];
+    const stages = [
+      "guarded-attempt",
+      ...gates.map((gate) => `gate:${gate.code}`),
+      "brief-insert",
+      ...versions.map((version) => `link:${version.thesisId}`),
+      ...mutation.exemptions.map((exemption) => `exemption:${exemption.thesisId}`),
+      "brief-publish",
+      "audit",
+    ];
     try {
-      assertWriteBatch(await this.database.batch(statements), statements.length);
-    } catch {
+      assertWriteBatch(await this.database.batch(statements), stages);
+    } catch (error) {
       const raced = await this.findAttemptByFreezeKey(freezeKey);
       if (raced !== null) return raced;
       const current = await this.findLatestAttempt(mutation.briefDate);
-      if (current !== null) throw conflict(mutation.expectedFreezeKey, current.freezeKey);
-      throw databaseError();
+      if (current !== null && mutation.expectedFreezeKey !== current.freezeKey) {
+        throw conflict(mutation.expectedFreezeKey, current.freezeKey);
+      }
+      // See writeDelayed: a guard that did not take effect is a write failure with a stage, not a
+      // concurrency conflict. Misreporting it as VERSION_CONFLICT hid the real cause in staging.
+      const staged = guardedStageError(error);
+      if (staged !== null) {
+        reportStorageFailure("daily-briefs.writePublished", error);
+        throw staged;
+      }
+      // A constraint or trigger rejected the batch (for example a stale publish trigger that does
+      // not yet accept exemptions): label it so it is never mistaken for a concurrency conflict.
+      reportStorageFailure("daily-briefs.writePublished", error);
+      throw error instanceof DailyBriefError ? error : databaseError({ stage: "batch" });
     }
     const published = await this.findPublished(mutation.briefDate);
     if (published === null || published.freezeKey !== freezeKey || published.attemptId !== mutation.attemptId) {
@@ -503,10 +651,10 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
     previousGuards: readonly PreviousBriefGuard[],
   ): D1PreparedStatement {
     if (
-      versionGuards.length !== 6
+      versionGuards.length !== versions.length
       || sourceGuards.length !== sourceHealth.length
       || sourceGuards.length === 0
-      || (previousGuards.length !== 0 && previousGuards.length !== 6)
+      || (previousGuards.length !== 0 && previousGuards.length > REQUIRED_DAILY_THESIS_IDS.length)
     ) throw databaseError();
     const versionGuardJson = JSON.stringify(versionGuards);
     const evidenceGuardJson = JSON.stringify(evidenceGuards);
@@ -547,7 +695,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
                SELECT MAX(latest.version) FROM thesis_versions latest
                 WHERE latest.thesis_id = guarded.thesis_id
              )
-          ) = 6
+          ) = ?
             AND (
               SELECT COUNT(*) FROM evidence guarded_evidence
                WHERE guarded_evidence.thesis_version_id IN (
@@ -645,7 +793,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
                 )
               )
               OR (
-                json_array_length(?) = 6
+                json_array_length(?) > 0
                 AND (
                   SELECT MAX(prior.brief_date) FROM daily_briefs prior
                    WHERE prior.status = 'published' AND prior.brief_date < ?
@@ -660,7 +808,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
                       ON prior_version.id = prior_link.thesis_version_id
                      AND prior_version.thesis_id = prior_link.thesis_id
                    WHERE prior_link.brief_date = json_extract(?, '$[0].briefDate')
-                ) = 6
+                ) = json_array_length(?)
                 AND NOT EXISTS (
                   SELECT 1 FROM json_each(?) guard
                    WHERE NOT EXISTS (
@@ -704,6 +852,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
       mutation.expectedFreezeKey,
       mutation.briefDate,
       versionGuardJson,
+      versions.length,
       versionGuardJson,
       evidenceGuardJson,
       evidenceGuardJson,
@@ -720,6 +869,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
       mutation.briefDate,
       previousGuardJson,
       mutation.briefDate,
+      previousGuardJson,
       previousGuardJson,
       previousGuardJson,
       previousGuardJson,
@@ -789,6 +939,15 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
          JOIN daily_briefs brief ON brief.publication_attempt_id = gate.attempt_id
         WHERE brief.brief_date = ?
         ORDER BY gate.gate_code`,
+    ).bind(briefDate);
+  }
+
+  private exemptionsForBriefStatement(briefDate: string): D1PreparedStatement {
+    return this.database.prepare(
+      `SELECT exemption.thesis_id, exemption.gap_id
+         FROM daily_brief_exemptions exemption
+        WHERE exemption.brief_date = ?
+        ORDER BY exemption.thesis_id`,
     ).bind(briefDate);
   }
 
@@ -963,8 +1122,12 @@ function decodeCitations(
 
 function decodePrevious(
   rows: readonly Record<string, unknown>[],
+  exemptions: readonly DailyBriefExemption[],
 ): ReadonlyMap<string, NonNullable<DailyBriefFrozenVersionFact["previousPublished"]>> {
-  if (rows.length !== 0 && rows.length !== REQUIRED_DAILY_THESIS_IDS.length) throw databaseError();
+  if (rows.length + exemptions.length !== 0 && rows.length + exemptions.length !== REQUIRED_DAILY_THESIS_IDS.length) {
+    throw databaseError();
+  }
+  const exemptedTheses = new Set<string>(exemptions.map((exemption) => exemption.thesisId));
   const values = new Map<string, NonNullable<DailyBriefFrozenVersionFact["previousPublished"]>>();
   const dates = new Set<string>();
   for (const row of rows) {
@@ -973,7 +1136,7 @@ function decodePrevious(
     ]);
     dates.add(calendarDate(item.brief_date));
     const thesisId = requiredThesisId(item.thesis_id);
-    if (values.has(thesisId)) throw databaseError();
+    if (values.has(thesisId) || exemptedTheses.has(thesisId)) throw databaseError();
     values.set(thesisId, {
       thesisVersionId: nonEmptyString(item.thesis_version_id),
       direction: enumValue(item.direction, THESIS_DIRECTIONS),
@@ -983,7 +1146,8 @@ function decodePrevious(
   }
   if (
     dates.size > 1
-    || (rows.length > 0 && REQUIRED_DAILY_THESIS_IDS.some((thesisId) => !values.has(thesisId)))
+    || (rows.length + exemptions.length > 0
+      && REQUIRED_DAILY_THESIS_IDS.some((thesisId) => !values.has(thesisId) && !exemptedTheses.has(thesisId)))
   ) throw databaseError();
   return values;
 }
@@ -1000,6 +1164,34 @@ function decodePreviousGuard(row: Record<string, unknown>): PreviousBriefGuard {
     stage: enumValue(item.stage, THESIS_STAGES),
     confidence: integer(item.confidence, 0, 100),
   };
+}
+
+/** Empty result means "no obligation": no baseline, already exactly reviewed, or no trigger. */
+function decodePendingReviewObligation(row: Record<string, unknown>): PendingReviewObligation[] {
+  const item = exactRecord(row, [
+    "thesis_id", "thesis_version_id", "direction", "stage", "confidence",
+    "before_version_id", "prior_direction", "prior_stage", "prior_confidence",
+    "matched_review_status",
+  ]);
+  if (item.before_version_id === null || item.prior_direction === null) return [];
+  if (item.matched_review_status === "approved") return [];
+  const triggers = highRiskTriggers({
+    direction: enumValue(item.direction, THESIS_DIRECTIONS),
+    stage: enumValue(item.stage, THESIS_STAGES),
+    confidence: integer(item.confidence, 0, 100),
+    previousPublished: {
+      direction: enumValue(item.prior_direction, THESIS_DIRECTIONS),
+      stage: enumValue(item.prior_stage, THESIS_STAGES),
+      confidence: integer(item.prior_confidence, 0, 100),
+    },
+  });
+  if (triggers.length === 0) return [];
+  return [{
+    thesisId: requiredThesisId(item.thesis_id),
+    afterVersionId: nonEmptyString(item.thesis_version_id),
+    beforeVersionId: nonEmptyString(item.before_version_id),
+    triggers: [...triggers].sort(),
+  }];
 }
 
 function decodeReviews(
@@ -1102,6 +1294,7 @@ function decodePublishedResult(
   linkRows: readonly Record<string, unknown>[],
   attemptRow: Record<string, unknown>,
   gateRows: readonly Record<string, unknown>[],
+  exemptions: readonly DailyBriefExemption[],
 ): DailyBriefResult {
   const brief = exactRecord(briefRow, [
     "brief_date", "status", "freeze_key", "headline", "summary", "top_changes_json",
@@ -1127,6 +1320,7 @@ function decodePublishedResult(
     briefDate,
     attempt.cutoff,
     freezeKey.startsWith(LEGACY_DAILY_BRIEF_FREEZE_PREFIX),
+    new Set(exemptions.map((exemption) => exemption.thesisId)),
   );
   const methodologySnapshot = jsonArray(brief.methodology_snapshot_json);
   const ruleSnapshot = jsonArray(brief.rule_snapshot_json);
@@ -1142,6 +1336,7 @@ function decodePublishedResult(
     ...attempt,
     status: "published",
     versions,
+    exemptions,
     gates,
     publishedAt: canonicalUtc(brief.published_at),
     publishedBy: nonEmptyString(brief.published_by),
@@ -1174,6 +1369,7 @@ function decodeAttempt(row: Record<string, unknown>): DailyBriefResult {
     gates: [],
     sourceHealth,
     versions,
+    exemptions: [],
     publishedAt: status === "published" ? canonicalUtc(item.created_at) : null,
     publishedBy: status === "published" ? nonEmptyString(item.actor) : null,
     attemptId: nonEmptyString(item.id),
@@ -1184,20 +1380,33 @@ function decodeAttemptVersions(targetJson: unknown, methodologyJson: unknown, ru
   const targets = jsonArray(targetJson);
   const methodologies = jsonArray(methodologyJson);
   const rules = jsonArray(ruleJson);
-  if (targets.length !== 6 || methodologies.length !== 6 || rules.length !== 6) throw databaseError();
+  if (
+    targets.length < 1
+    || targets.length > REQUIRED_DAILY_THESIS_IDS.length
+    || methodologies.length !== targets.length
+    || rules.length !== targets.length
+  ) throw databaseError();
+  const seenSortOrders = new Set<number>();
   return deepFreeze(targets.map((raw, index) => {
     const target = exactRecord(raw, ["thesisId", "thesisVersionId", "version", "sortOrder"]);
     const method = exactRecord(methodologies[index], ["thesisId", "methodologyVersion"]);
     const rule = exactRecord(rules[index], ["thesisId", "ruleVersion"]);
     const thesisId = requiredThesisId(target.thesisId);
-    if (method.thesisId !== thesisId || rule.thesisId !== thesisId || target.sortOrder !== index) throw databaseError();
+    const sortOrder = integer(target.sortOrder, 0, 5);
+    if (
+      method.thesisId !== thesisId
+      || rule.thesisId !== thesisId
+      || REQUIRED_DAILY_THESIS_IDS[sortOrder] !== thesisId
+      || seenSortOrders.has(sortOrder)
+    ) throw databaseError();
+    seenSortOrders.add(sortOrder);
     return {
       thesisId,
       thesisVersionId: nonEmptyString(target.thesisVersionId),
       version: integer(target.version, 1),
       methodologyVersion: nonEmptyString(method.methodologyVersion),
       ruleVersion: nonEmptyString(rule.ruleVersion),
-      sortOrder: integer(target.sortOrder, 0, 5),
+      sortOrder,
     };
   }));
 }
@@ -1207,9 +1416,11 @@ function decodeFrozenLinks(
   briefDate: string,
   cutoff: string,
   legacyCompatible: boolean,
+  exemptedTheses: ReadonlySet<string>,
 ): readonly FrozenDailyBriefVersion[] {
-  if (rows.length !== 6) throw databaseError();
-  return deepFreeze(rows.map((row, index) => {
+  if (rows.length + exemptedTheses.size !== REQUIRED_DAILY_THESIS_IDS.length) throw databaseError();
+  const seenSortOrders = new Set<number>();
+  return deepFreeze(rows.map((row) => {
     const item = exactRecord(row, [
       "brief_date", "thesis_id", "thesis_version_id", "methodology_version", "rule_version",
       "sort_order", "version", "status", "based_on_cutoff", "calculation_json",
@@ -1219,25 +1430,41 @@ function decodeFrozenLinks(
     const methodologyVersion = nonEmptyString(item.methodology_version);
     const ruleVersion = nonEmptyString(item.rule_version);
     const status = enumValue(item.status, ["published", "withdrawn"] as const);
+    const sortOrder = integer(item.sort_order, 0, 5);
     if (
       item.brief_date !== briefDate
       || (status !== "published" && status !== "withdrawn")
-      || item.sort_order !== index
-      || REQUIRED_DAILY_THESIS_IDS[index] !== thesisId
+      || REQUIRED_DAILY_THESIS_IDS[sortOrder] !== thesisId
+      || seenSortOrders.has(sortOrder)
+      || exemptedTheses.has(thesisId)
       || (!legacyCompatible && canonicalUtc(item.based_on_cutoff) !== cutoff)
       || (!legacyCompatible && calculation.thesisId !== thesisId)
       || (!legacyCompatible && calculation.cutoff !== cutoff)
       || (!legacyCompatible && calculation.methodologyVersion !== methodologyVersion)
       || (!legacyCompatible && calculation.schemaVersion !== ruleVersion)
     ) throw databaseError();
+    seenSortOrders.add(sortOrder);
     return {
       thesisId,
       thesisVersionId: nonEmptyString(item.thesis_version_id),
       version: integer(item.version, 1),
       methodologyVersion,
       ruleVersion,
-      sortOrder: index,
+      sortOrder,
     };
+  }));
+}
+
+/** One acknowledged coverage gap per exempted thesis; the gap itself must be a real seed gap id. */
+function decodeExemptions(rows: readonly Record<string, unknown>[]): readonly DailyBriefExemption[] {
+  if (rows.length > REQUIRED_DAILY_THESIS_IDS.length) throw databaseError();
+  const seen = new Set<string>();
+  return deepFreeze(rows.map((row) => {
+    const item = exactRecord(row, ["thesis_id", "gap_id"]);
+    const thesisId = requiredThesisId(item.thesis_id);
+    if (seen.has(thesisId)) throw databaseError();
+    seen.add(thesisId);
+    return { thesisId, gapId: nonEmptyString(item.gap_id) };
   }));
 }
 
@@ -1290,16 +1517,30 @@ function assertMutation(mutation: DailyBriefMutation): void {
   canonicalUtc(mutation.occurredAt);
   nonEmptyString(mutation.attemptId);
   nonEmptyString(mutation.auditId);
-  if (mutation.targets.length !== 6) throw new DailyBriefError("VALIDATION", "每日判定存储目标不完整");
+  if (
+    !Array.isArray(mutation.exemptions)
+    || mutation.targets.length < 1
+    || mutation.targets.length + mutation.exemptions.length !== REQUIRED_DAILY_THESIS_IDS.length
+  ) {
+    throw new DailyBriefError("VALIDATION", "每日判定存储目标不完整");
+  }
 }
 
-function assertWriteBatch(results: unknown, count: number): void {
-  if (!Array.isArray(results) || results.length !== count) throw databaseError();
-  for (const result of results) {
+/** Returns the write-failure error when it carries a stable stage label, else null. */
+function guardedStageError(error: unknown): DailyBriefError | null {
+  if (!(error instanceof DailyBriefError)) return null;
+  const stage = error.details?.stage;
+  return typeof stage === "string" && stage.length > 0 ? error : null;
+}
+
+function assertWriteBatch(results: unknown, stages: readonly string[]): void {
+  if (!Array.isArray(results) || results.length !== stages.length) throw databaseError();
+  for (const [index, result] of results.entries()) {
+    const stage = stages[index] ?? `statement-${index}`;
     const item = recordValue(result);
-    if (item.success !== true) throw databaseError();
+    if (item.success !== true) throw databaseError({ stage });
     const meta = recordValue(item.meta);
-    if (integer(meta.changes, 0) !== 1) throw databaseError();
+    if (integer(meta.changes, 0) !== 1) throw databaseError({ stage });
   }
 }
 
@@ -1416,8 +1657,8 @@ function conflict(expectedFreezeKey: string | null, currentFreezeKey: string | n
   );
 }
 
-function databaseError(): DailyBriefError {
-  return new DailyBriefError("DATABASE", "D1 无法完成或读取每日判定冻结");
+function databaseError(details: Readonly<Record<string, unknown>> | null = null): DailyBriefError {
+  return new DailyBriefError("DATABASE", "D1 无法完成或读取每日判定冻结", details);
 }
 
 function deepFreeze<T>(value: T): T {

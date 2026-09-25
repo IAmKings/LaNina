@@ -26,7 +26,7 @@ function sqlLiteral(value: string): string {
 }
 
 describe("initial thesis seed contract", () => {
-  it("decodes all six versioned seeds and keeps every seed disabled pending research review", () => {
+  it("decodes all six versioned seeds and keeps only SHIP-EU-01 unpublishable", () => {
     expect(INITIAL_THESIS_SEEDS).toHaveLength(6);
     for (const seed of INITIAL_THESIS_SEEDS) {
       expect(decodeThesisSeed(seed)).toEqual(seed);
@@ -34,10 +34,12 @@ describe("initial thesis seed contract", () => {
       expect(seed.regionDefinitionVersion).toBeTruthy();  // D-group unlocked 2026-09-21
       expect(seed.target).not.toBe("");
       expect(seed.timeHorizon).not.toBe("");
+      // D 组口径（2026-09-25）：覆盖缺口只做"数据覆盖不足"展示与置信度封顶，不再否决发布；
+      // SHIP-EU-01 因结构性没有方向证据保持 publication=false，走日报豁免。
       expect(seed.readiness).toMatchObject({
         reviewStatus: "approved",
         productionEvaluation: true,
-        publication: false,
+        publication: seed.id !== "SHIP-EU-01",
         marketEvidenceReady: false,
       });
       expect(seed.materialChangeThresholds).toEqual({
@@ -46,8 +48,12 @@ describe("initial thesis seed contract", () => {
         confidenceDeltaPoints: null,
         observationRevisionDelta: null,
       });
-      expect(seed.indicatorSelectors.every(
-        (selector) => selector.reviewStatus === "pending" && !selector.active && selector.weight === 0,
+      // D 组 D3 签字：selectors 已 approved/active 并带层权重（control 层为 0）。
+      expect(seed.indicatorSelectors.every((selector) =>
+        selector.reviewStatus === "approved" && selector.active,
+      )).toBe(true);
+      expect(seed.indicatorSelectors.every((selector) =>
+        selector.layer === "control" ? selector.weight === 0 : selector.weight > 0,
       )).toBe(true);
       // D 组 D3 签字（2026-09-22）：所有 SLO 都已审核并激活，maxAgeMinutes 由种子精确给出
       expect(seed.freshnessSlos.every(
@@ -58,23 +64,31 @@ describe("initial thesis seed contract", () => {
         ...seed.refuteRules,
         ...seed.invalidationRules,
         ...seed.reliefRules,
-      ].every((rule) => rule.reviewStatus === "pending" && !rule.active)).toBe(true);
-      expect(seed.stageGates.every(
-        (gate) => gate.reviewStatus === "pending" && !gate.active && gate.minimumRuleMatches === null,
-      )).toBe(true);
+      ].every((rule) => rule.reviewStatus === "approved" && rule.active)).toBe(true);
+      // D 组 D4 签字：门槛已 approved/active 且 threshold=1；方案 A 例外——无 market 层证据的
+      // 论点其 market_confirmed 门槛必须保持 pending（不得声明无法归因的市场确认）。
+      const hasMarketLayer = seed.requiredEvidenceLayers.includes("market");
+      expect(seed.stageGates.every((gate) => {
+        const unprovableMarket = gate.targetStage === "market_confirmed" && !hasMarketLayer;
+        return unprovableMarket
+          ? gate.reviewStatus === "pending" && !gate.active && gate.minimumRuleMatches === null
+          : gate.reviewStatus === "approved" && gate.active && gate.minimumRuleMatches === 1;
+      })).toBe(true);
+      // D 组 D5 签字（2026-09-24）：方向与置信度策略已审核启用。
       expect(seed.directionPolicy).toMatchObject({
-        reviewStatus: "pending",
-        active: false,
+        version: "direction-v1",
+        reviewStatus: "approved",
+        active: true,
       });
-      expect(seed.directionPolicy.mappings.every(({ direction }) => direction === null)).toBe(true);
+      expect(seed.directionPolicy.mappings.some(({ direction }) => direction !== null)).toBe(true);
       expect(seed.confidencePolicy).toEqual({
-        version: "confidence-v1-pending-review",
-        reviewStatus: "pending",
-        active: false,
-        lateFreshnessScore: null,
-        sourceTierScores: { A: null, B: null, C: null },
-        missingRequiredLayerCap: null,
-        coverageGapCap: null,
+        version: "confidence-v1",
+        reviewStatus: "approved",
+        active: true,
+        lateFreshnessScore: 59,
+        sourceTierScores: { A: 100, B: 85, C: 70 },
+        missingRequiredLayerCap: 49,
+        coverageGapCap: 69,
       });
     }
   });
@@ -168,13 +182,19 @@ describe("initial thesis seed contract", () => {
   });
 
   it("keeps pending gate thresholds inactive and rejects unsatisfiable layer mappings", () => {
+    // D 组 D4 后门槛已 approved；这里显式退回 pending 来守住"未审核门槛不得声明阈值"的不变式。
     const pendingThreshold = mutableSeed();
-    objectArray(pendingThreshold.stageGates)[0].minimumRuleMatches = 1;
+    Object.assign(objectArray(pendingThreshold.stageGates)[0], {
+      reviewStatus: "pending",
+      active: false,
+      minimumRuleMatches: 1,
+    });
     expect(() => decodeThesisSeed(pendingThreshold)).toThrow(/pending gate/);
 
     const undeclaredLayer = mutableSeed();
-    objectArray(undeclaredLayer.stageGates)[0].requiredLayers = ["physical"];
-    expect(() => decodeThesisSeed(undeclaredLayer)).toThrow(/must be declared in requiredEvidenceLayers/);
+    objectArray(undeclaredLayer.stageGates)[0].requiredLayers = ["weather", "physical"];
+    expect(() => decodeThesisSeed(undeclaredLayer))
+      .toThrow(/must be declared in requiredEvidenceLayers/);
 
     const unavailableLayer = mutableSeed(5);
     objectArray(unavailableLayer.stageGates)[3].requiredLayers = ["weather", "physical", "market", "control"];
@@ -189,11 +209,17 @@ describe("initial thesis seed contract", () => {
   });
 
   it("rejects numeric judgments while their selector, rule or thresholds remain pending", () => {
+    // D 组 D3 后 selectors/rules 已 approved；同样显式退回 pending 守住 fail-closed。
     const weightedSelector = mutableSeed();
-    objectArray(weightedSelector.indicatorSelectors)[0].weight = 1;
+    Object.assign(objectArray(weightedSelector.indicatorSelectors)[0], {
+      reviewStatus: "pending",
+      active: false,
+      weight: 1,
+    });
     expect(() => decodeThesisSeed(weightedSelector)).toThrow(/pending selector/);
 
     const executableRule = mutableSeed();
+    Object.assign(objectArray(executableRule.supportRules)[0], { reviewStatus: "pending", active: false });
     objectArray(executableRule.supportRules)[0].predicate = {
       kind: "numeric_compare",
       selectorId: "enso-roni",
@@ -215,11 +241,14 @@ describe("initial thesis seed contract", () => {
     });
     expect(() => decodeThesisSeed(incompleteApprovedThreshold)).toThrow(/pending items must be/);
 
+    // 未审核策略仍必须 fail-closed：显式把方向/置信度策略退回 pending 后再断言拒绝。
     const pendingDirection = mutableSeed();
+    Object.assign(objectAt(pendingDirection.directionPolicy), { reviewStatus: "pending", active: false });
     objectArray(objectAt(pendingDirection.directionPolicy).mappings)[0].direction = "bullish";
     expect(() => decodeThesisSeed(pendingDirection)).toThrow(/pending direction policy/);
 
     const pendingLateScore = mutableSeed();
+    Object.assign(objectAt(pendingLateScore.confidencePolicy), { reviewStatus: "pending", active: false });
     objectAt(pendingLateScore.confidencePolicy).lateFreshnessScore = 50;
     expect(() => decodeThesisSeed(pendingLateScore)).toThrow(/pending confidence policy/);
 

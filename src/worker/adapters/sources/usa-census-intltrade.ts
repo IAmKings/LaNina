@@ -47,9 +47,11 @@ export function createUsaCensusIntlTradeAdapter(apiKey?: string): SourceAdapter 
     }
 
     const observations: ObservationInput[] = [];
+    let lastRawBody: Uint8Array | null = null;
     for (const month of months) {
       const row = await fetchMonthlySumRow(context, apiKey as string, month);
       if (row === null) continue; // 该月尚未发布（Census 滞后 4-6 周，行为：
+      lastRawBody = row.rawBody ?? lastRawBody;
       observations.push(toObservationInput(row, month, context.fetchedAt));
     }
     if (observations.length === 0) {
@@ -63,10 +65,10 @@ export function createUsaCensusIntlTradeAdapter(apiKey?: string): SourceAdapter 
       etag: null,
       lastModified: null,
       contentType: "application/json",
-      contentHash: await sha256Hex(new TextEncoder().encode(
-        observations.map((o) => `${o.observedAt}:${o.value}`).join("|"),
-      )),
-      rawBody: null,
+      // contentHash 必须是**原始正文**的 SHA-256：R2 条件写用它作为校验和比对实际字节；
+      // 缺失正文时明确失败，避免出现"changed 结果没有原始正文"（VALIDATION）。
+      contentHash: lastRawBody === null ? null : await sha256Hex(lastRawBody),
+      rawBody: lastRawBody,
       observations,
       warnings: [
         "SOURCE_PUBLISHED_AT_UNKNOWN",
@@ -97,10 +99,11 @@ async function fetchMonthlySumRow(
   context: CollectContext,
   apiKey: string,
   month: string,
-): Promise<{ sum: number; portsCovered: number } | null> {
+): Promise<{ sum: number; portsCovered: number; rawBody: Uint8Array | null } | null> {
   const urlTemplate = new URL(context.sourceUrl);
   let sum = 0;
   let portsCovered = 0;
+  let lastRawBody: Uint8Array | null = null;
   for (const port of USA_CENSUS_PORT_CODES) {
     const url = new URL(urlTemplate);
     url.searchParams.set("get", "CNT_WGT_MO");
@@ -116,9 +119,15 @@ async function fetchMonthlySumRow(
     if (!response.ok) {
       throw errorForResponse(response);
     }
-    const cells = extractWeightCells(
-      new TextDecoder().decode(await readBodyWithinLimit(response, 256_000)),
-    );
+    const bytes = await readBodyWithinLimit(response, 256_000);
+    lastRawBody = bytes;
+    const text = new TextDecoder().decode(bytes);
+    if (text.trim().length === 0) {
+      // 2026-09-24 实测：Census 对尚未发布的月份返回 204/空体。这属于「该月尚未发布」，
+      // 应回溯到更早的月份，而不是把整轮采集判为失败（此前会被 extractWeightCells 抛 VALIDATION）。
+      return null;
+    }
+    const cells = extractWeightCells(text);
     portsCovered += 1;
     sum += cells.reduce((acc, value) => acc + value, 0);
   }
@@ -126,7 +135,7 @@ async function fetchMonthlySumRow(
     throw new SourceCollectionError("SCHEMA_DRIFT", "Census 港口行数不足");
   }
   if (sum === 0) return null; // 月度尚未发布或该整月无已发布值
-  return { sum, portsCovered };
+  return { sum, portsCovered, rawBody: lastRawBody };
 }
 
 /** Census 返回 2D 数组；首行为表头，其余行为数据行。 */

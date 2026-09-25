@@ -99,10 +99,11 @@ export function createUsdaFasPsdAdapter(apiKey?: string): SourceAdapter {
 
       let response: Response;
       try {
-        response = await context.fetch(requestUrl, { headers, redirect: "error" });
-      } catch {
+        response = await context.fetch(requestUrl, { headers, redirect: "manual" });
+      } catch (error) {
         throw new SourceCollectionError("NETWORK", "无法连接 USDA FAS PSD", {
           retryable: true,
+          cause: error,
         });
       }
 

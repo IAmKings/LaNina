@@ -96,6 +96,12 @@ function AdminRunsNotice({ heading, error = false }: { heading: string; error?: 
       <p className="eyebrow">研究后台 · 只读</p>
       <h2>{heading}</h2>
       <p>本页不提供手动重跑、草稿编辑、发布、撤回或任何原始观测修改功能。</p>
+      {error ? (
+        <p className="notice-panel-action">
+          Cloudflare Access 会话约 24 小时后过期，表现为本页显示受限投影（后台请求未携带 JWT）。
+          <a href="/api/admin/runs">重新登录 Cloudflare Access</a>，完成登录后回到本页即可恢复。
+        </p>
+      ) : null}
     </section>
   );
 }

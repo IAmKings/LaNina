@@ -17,12 +17,13 @@ describe("D1PublicReadModelRepository", () => {
       success([cardRow()]),
       success([changeRow()]),
       success([sourceRow()]),
+      success([coverageGapRow()]),
     ]);
 
     const result = await new D1PublicReadModelRepository(database as unknown as D1Database)
       .overview(GENERATED_AT);
 
-    expect(database.statements).toHaveLength(4);
+    expect(database.statements).toHaveLength(5);
     expect(database.statements[1]!.query).toContain("thesis_publications publication");
     expect(database.statements[1]!.query).toContain("publication.current_version_id");
     expect(database.statements[1]!.query).toContain("version.status = 'published'");
@@ -30,6 +31,7 @@ describe("D1PublicReadModelRepository", () => {
     expect(database.statements[2]!.query).toContain("change.published_version_id");
     expect(database.statements[2]!.values).toEqual([3]);
     expect(database.statements[3]!.query).toContain("source.enabled = 1");
+    expect(database.statements[4]!.query).toContain("daily_brief_exemptions");
     expect(JSON.stringify(database.statements.map((statement) => statement.query)))
       .not.toMatch(/snapshot_key|source_run_id|metadata_json|error_message|after_json|before_json/i);
     expect(result).toMatchObject({
@@ -38,13 +40,22 @@ describe("D1PublicReadModelRepository", () => {
       enso: { id: "ENSO-CORE-01", stage: "watch" },
       topChanges: [{ type: "thesis", afterLabel: "已进入公开版本" }],
       theses: [{ latestEvidenceSummary: null }],
+      coverageGaps: [{
+        thesisId: "SHIP-EU-01",
+        title: "欧线航运市场确认",
+        gapDescription: expect.stringContaining("欧线运价"),
+      }],
       sourceHealth: { healthy: 1, delayed: 0, stale: 0, broken: 0 },
       freshness: "current",
     });
+    // 被豁免论点不是论点卡片：公开投影里没有方向/置信度字段，绝不编造。
+    const exempted = result.coverageGaps[0] as unknown as Record<string, unknown>;
+    expect(exempted).not.toHaveProperty("direction");
+    expect(exempted).not.toHaveProperty("confidence");
   });
 
   it("returns an explicit empty public overview rather than reading drafts", async () => {
-    const database = new FakeDatabase([success([]), success([]), success([]), success([])]);
+    const database = new FakeDatabase([success([]), success([]), success([]), success([]), success([])]);
 
     await expect(new D1PublicReadModelRepository(database as unknown as D1Database)
       .overview(GENERATED_AT)).resolves.toEqual({
@@ -53,6 +64,7 @@ describe("D1PublicReadModelRepository", () => {
       enso: null,
       topChanges: [],
       theses: [],
+      coverageGaps: [],
       sourceHealth: { healthy: 0, delayed: 0, stale: 0, broken: 0 },
       freshness: "current",
     });
@@ -61,7 +73,7 @@ describe("D1PublicReadModelRepository", () => {
   });
 
   it("uses existing pointer/public-version query indexes without a card-level query", () => {
-    const database = new FakeDatabase([success([]), success([]), success([]), success([])]);
+    const database = new FakeDatabase([success([]), success([]), success([]), success([]), success([])]);
     const repository = new D1PublicReadModelRepository(database as unknown as D1Database);
 
     void repository.overview(GENERATED_AT);
@@ -70,7 +82,7 @@ describe("D1PublicReadModelRepository", () => {
     expect(thesisQuery).toMatch(/FROM thesis_publications publication/);
     expect(thesisQuery).toMatch(/publication\.current_version_id/);
     expect(thesisQuery).toMatch(/version\.status = 'published'/);
-    expect(database.statements).toHaveLength(4);
+    expect(database.statements).toHaveLength(5);
   });
 
   it("reads a one-query public thesis-card list from current published pointers only", async () => {
@@ -392,18 +404,20 @@ describe("D1PublicReadModelRepository", () => {
   });
 
   it("uses the latest published methodology version without reading frozen private snapshots", async () => {
-    const database = new FakeDatabase([], [success([methodologyRow()])]);
+    const database = new FakeDatabase([success([methodologyRow()]), success([])]);
 
     const result = await new D1PublicReadModelRepository(database as unknown as D1Database)
       .methodology(GENERATED_AT);
 
-    expect(database.statements).toHaveLength(1);
+    expect(database.statements).toHaveLength(2);
     expect(database.statements[0]!.query).toContain("link.methodology_version");
     expect(database.statements[0]!.query).not.toMatch(/snapshot_json|published_by|freeze_key/i);
+    expect(database.statements[1]!.query).toContain("daily_brief_exemptions");
     expect(result).toMatchObject({
       methodologyVersion: "evaluation-v1-draft",
       lastUpdatedAt: "2026-09-09T23:00:00.000Z",
       sections: expect.arrayContaining([expect.objectContaining({ id: "confidence" })]),
+      coverageGaps: [],
     });
   });
 });
@@ -647,6 +661,14 @@ function methodologyRow(): Record<string, unknown> {
   return {
     published_at: "2026-09-09T23:00:00.000Z",
     methodology_version: "evaluation-v1-draft",
+  };
+}
+
+function coverageGapRow(): Record<string, unknown> {
+  return {
+    thesis_id: "SHIP-EU-01",
+    gap_id: "eu-route-market-unlicensed",
+    title: "欧线航运市场确认",
   };
 }
 

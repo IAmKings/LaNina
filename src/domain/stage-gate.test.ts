@@ -207,9 +207,11 @@ describe("evaluateStageGates", () => {
         transition: "unchanged",
         manualConfirmationApplied: false,
       });
-      expect(result.reasons.map(({ code }) => code)).toContain("PENDING_GATE");
-      expect(result.reasons.map(({ code }) => code)).toContain("PENDING_RULE");
-      expect(result.reasons.map(({ code }) => code)).toContain("MISSING_REQUIRED_LAYER");
+      // D 组 D3/D4 签字后（2026-09-24）：规则与门槛已 approved，空选择下不再出现 PENDING_*，
+      // 但缺少必需证据层（MISSING_REQUIRED_LAYER）仍必须拦住阶段推进。
+      const codes = result.reasons.map(({ code }) => code);
+      expect(codes).toContain("MISSING_REQUIRED_LAYER");
+      expect(codes).not.toContain("PENDING_RULE");
     }
   });
 
@@ -251,9 +253,11 @@ describe("evaluateStageGates", () => {
 
     expect(result.highestEligibleStage).toBe("watch");
     expect(result.stage).toBe("watch");
+    // 方案 A（2026-09-24 负责人确认）：ENSO 无 market 层证据，故 market_confirmed 门槛保持
+    // pending —— 天气证据不得暗示市场确认，且门槛不能声明已被审核的层清单。
     expect(result.checks.find(({ targetStage }) => targetStage === "market_confirmed")).toMatchObject({
       status: "pending",
-      requiredLayers: [],
+      requiredLayers: ["weather"],
     });
   });
 

@@ -98,7 +98,8 @@ describe("NASA POWER regional rainfall adapter behavior", () => {
         format: "JSON",
         "time-standard": "UTC",
       });
-      expect(init).toMatchObject({ redirect: "error" });
+      // workerd 不支持 redirect:"error"（Node 支持）——部署到 Worker 会抛 TypeError，故改为 manual。
+      expect(init).toMatchObject({ redirect: "manual" });
     }
   });
 

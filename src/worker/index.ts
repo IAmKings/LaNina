@@ -8,6 +8,8 @@ import {
   type DailyBriefPageModel,
   type IndicatorSeriesModel,
   type MethodologyPageModel,
+  type AdminDailyExemptionTargetModel,
+  type AdminDailyReviewObligationModel,
   type AdminDraftPageModel,
   type AdminDailyTargetModel,
   type AdminRole,
@@ -111,9 +113,13 @@ import {
 import { D1DailyPublicationTargetRepository } from "./adapters/storage/cloudflare-daily-publication";
 import {
   shanghaiBriefDate,
+  REQUIRED_DAILY_THESIS_IDS,
+  type DailyBriefExemption,
   type DailyBriefFreezeCommand,
   type DailyBriefResult,
+  type RequiredDailyThesisId,
 } from "../domain/daily-brief";
+import { coverageGapOf } from "../domain/coverage-gaps";
 import { AtomFeedModule } from "./modules/atom-feed";
 import { robotsResponse, sitemapResponse } from "./modules/site-discovery";
 import {
@@ -266,6 +272,8 @@ interface AdminDailyBriefRead {
   readonly currentFreezeKey: string | null;
   readonly targets: readonly AdminDailyTargetModel[];
   readonly blockers: readonly string[];
+  readonly exemptibleTargets: readonly AdminDailyExemptionTargetModel[];
+  readonly pendingReviews: readonly AdminDailyReviewObligationModel[];
 }
 type AdminDailyBriefReadFromBindings = (
   briefDate: string,
@@ -746,9 +754,10 @@ async function handleRequestWithoutSecurityHeaders(
       return adminAuthorizationError(error, requestId);
     }
     if (thesisPublication === null) {
+      // 路由已匹配 `.../publish|withdraw`，说明是版本 ID 本身不合法（例如含空格/占位符）。
       return json({
-        error: { code: "NOT_FOUND", message: "未找到可发布的论点版本", requestId },
-      }, 404);
+        error: { code: "VALIDATION", message: "论点版本 ID 无效或不受支持", requestId },
+      }, 400);
     }
 
     const body = await parseAdministrativeThesisPublicationBody(request);
@@ -861,9 +870,10 @@ async function handleRequestWithoutSecurityHeaders(
       return adminAuthorizationError(error, requestId);
     }
     if (thesisReview === null) {
+      // 路由已匹配 `.../review`，说明是版本 ID 本身不合法（例如含空格/占位符）。
       return json({
-        error: { code: "NOT_FOUND", message: "未找到可审核的论点版本", requestId },
-      }, 404);
+        error: { code: "VALIDATION", message: "论点版本 ID 无效或不受支持", requestId },
+      }, 400);
     }
 
     const body = await parseAdministrativeThesisReviewBody(request);
@@ -942,18 +952,31 @@ async function handleRequestWithoutSecurityHeaders(
         body.cutoff,
         env,
       );
-      if (resolution.targets === null) {
+      const exemptionError = dailyExemptionValidationError(body.exemptions, resolution);
+      if (exemptionError !== null) {
+        return json({
+          error: { code: "EXEMPTION_INVALID", message: exemptionError, requestId },
+        }, 422);
+      }
+      const exemptedTheses = new Set<string>(body.exemptions.map((exemption) => exemption.thesisId));
+      const targets = resolution.resolvableTargets.filter((target) => !exemptedTheses.has(target.thesisId));
+      const uncoveredBlockers = resolution.blockers.filter((blocker) =>
+        !blockerCoveredByExemption(blocker, exemptedTheses));
+      if (
+        uncoveredBlockers.length > 0
+        || targets.length + body.exemptions.length !== REQUIRED_DAILY_THESIS_IDS.length
+      ) {
         return json({
           error: {
             code: "TARGETS_UNAVAILABLE",
-            message: "六条论点尚未全部具备该截止时间的已发布版本，请先完成论点发布",
+            message: "六条论点尚未全部具备该截止时间的已发布版本或已确认豁免，请先完成论点发布",
             requestId,
           },
         }, 409);
       }
       const result = await (dependencies.dailyBriefFreeze ?? dailyBriefFreezeFromCloudflareBindings)({
         cutoff: body.cutoff,
-        targets: resolution.targets,
+        targets,
         headline: body.headline,
         summary: body.summary,
         topChanges: [...body.topChanges],
@@ -961,12 +984,11 @@ async function handleRequestWithoutSecurityHeaders(
         reason: body.reason,
         occurredAt,
         expectedFreezeKey: body.expectedFreezeKey,
+        exemptions: [...body.exemptions],
       }, env);
       if (result.status !== "published") {
-        const failed = result.gates
-          .filter((gate) => gate.status !== "passed")
-          .map((gate) => gate.code)
-          .join(", ");
+        const failedGates = result.gates.filter((gate) => gate.status !== "passed");
+        const failed = failedGates.map((gate) => gate.code).join(", ");
         return json({
           error: {
             code: "GATES_FAILED",
@@ -974,6 +996,10 @@ async function handleRequestWithoutSecurityHeaders(
               ? "发布门禁未通过，未发布每日判定"
               : `发布门禁未通过：${failed}`,
             requestId,
+            // 只回传稳定的门禁/原因枚举，浏览器据此给出可操作解释，不渲染服务端文案。
+            details: {
+              gates: failedGates.map((gate) => ({ code: gate.code, reasons: gate.reasons })),
+            },
           },
         }, 409);
       }
@@ -1230,7 +1256,9 @@ async function manualSourceRunFromCloudflareBindings(
       adapter,
       repository: new D1IngestionRepository(env.DB),
       snapshots: new R2RawSnapshotStore(env.RAW),
-      fetch: globalThis.fetch,
+      // `fetch` 必须绑定 globalThis：未绑定调用在 workerd 里会抛 Illegal invocation，
+      // 被采集管线归类成 NETWORK「来源网络请求失败」（http_status 始终为 null）。
+      fetch: globalThis.fetch.bind(globalThis),
     }),
   ).run(input);
 }
@@ -1293,20 +1321,41 @@ async function adminDailyBriefFromCloudflareBindings(
   env: Env,
 ): Promise<AdminDailyBriefRead> {
   const cutoff = evaluationCutoffForBriefDate(briefDate);
-  const briefs = new DailyBriefModule(new D1DailyBriefRepository(env.DB));
+  const repository = new D1DailyBriefRepository(env.DB);
+  const briefs = new DailyBriefModule(repository);
   const [published, currentFreezeKey, targets] = await Promise.all([
     briefs.findPublished(briefDate),
     briefs.currentFreezeKey(briefDate),
     dailyPublicationTargetsFromCloudflareBindings(cutoff, env),
   ]);
+  const pendingReviews = published !== null
+    ? []
+    : await repository.findPendingReviewObligations(
+      briefDate,
+      targets.resolvableTargets.map((target) => target.thesisVersionId),
+    );
   return {
     briefDate,
     cutoff,
     published: published !== null,
     publishedAt: published?.publishedAt ?? null,
     currentFreezeKey,
-    targets: targets.targets ?? [],
+    // 预检展示该 cutoff 的实际候选版本（可能是 draft）：一键发布需要论点与版本号才能携带
+    // expectedVersion；冻结目标仍由服务端在发布时重新按已发布版本解析。
+    targets: targets.candidateTargets.map((candidate) => ({
+      thesisId: candidate.thesisId,
+      thesisVersionId: candidate.thesisVersionId,
+      version: candidate.version,
+      status: candidate.status,
+    })),
     blockers: targets.blockers,
+    exemptibleTargets: targets.exemptibleTargets,
+    pendingReviews: pendingReviews.map((obligation) => ({
+      thesisId: obligation.thesisId,
+      afterVersionId: obligation.afterVersionId,
+      beforeVersionId: obligation.beforeVersionId,
+      triggers: obligation.triggers,
+    })),
   };
 }
 
@@ -1449,6 +1498,36 @@ function dailyBriefPublicationResponse(result: DailyBriefResult): {
   };
 }
 
+/**
+ * 路径①（2026-09-24）：豁免必须指向该论点真实存在的覆盖缺口，且该论点在该 cutoff 确实没有
+ * 已发布版本。缺口不存在或该论点本可发布都返回 422，绝不放行伪造豁免。
+ */
+function dailyExemptionValidationError(
+  exemptions: readonly DailyBriefExemption[],
+  resolution: DailyPublicationTargetResolution,
+): string | null {
+  if (exemptions.length === 0) return null;
+  const exemptible = new Set(resolution.exemptibleTargets.map((target) => target.thesisId));
+  for (const exemption of exemptions) {
+    if (coverageGapOf(exemption.thesisId, exemption.gapId) === null) {
+      return `豁免 ${exemption.thesisId} 引用了不存在的覆盖缺口`;
+    }
+    if (!exemptible.has(exemption.thesisId)) {
+      return `豁免 ${exemption.thesisId} 无效：该论点在该截止时间已有已发布版本`;
+    }
+  }
+  return null;
+}
+
+/** A missing or unpublished thesis is the only blocker an explicit exemption can cover. */
+function blockerCoveredByExemption(blocker: string, exemptedTheses: ReadonlySet<string>): boolean {
+  const separator = blocker.indexOf(":");
+  if (separator === -1) return false;
+  const code = blocker.slice(0, separator);
+  const subject = blocker.slice(separator + 1);
+  return (code === "TARGET_MISSING" || code === "VERSION_NOT_PUBLISHED") && exemptedTheses.has(subject);
+}
+
 function thesisEvaluationError(error: unknown, requestId: string): Response {
   if (error instanceof ThesisEvaluationError) {
     if (error.code === "VALIDATION") {
@@ -1479,8 +1558,21 @@ function dailyBriefPublicationError(error: unknown, requestId: string): Response
             ? "该日期的每日判定已发布且不可替换"
             : "每日判定内容或版本已变化，请刷新后重试",
           requestId,
+          details: error.code === "VERSION_CONFLICT" ? error.details : undefined,
         },
       }, 409);
+    }
+    if (error.code === "DATABASE") {
+      // `details.stage` names the statement that did not take effect (no SQL, no stored values), so
+      // an operator can tell a write-guard failure apart from a transient storage error.
+      return json({
+        error: {
+          code: "DATABASE",
+          message: "每日判定写入或读取失败，请稍后重试",
+          requestId,
+          details: error.details,
+        },
+      }, 503);
     }
   }
   if (error instanceof DailyPublicationTargetError && error.code === "VALIDATION") {
@@ -1604,6 +1696,7 @@ interface AdministrativeDailyPublicationBody {
   readonly topChanges: readonly string[];
   readonly reason: string;
   readonly expectedFreezeKey: string | null;
+  readonly exemptions: readonly DailyBriefExemption[];
 }
 
 /**
@@ -1620,6 +1713,7 @@ async function parseAdministrativeDailyPublicationBody(
     const record = parsed as Record<string, unknown>;
     const allowed = new Set([
       "cutoff", "headline", "summary", "topChanges", "reason", "expectedFreezeKey", "confirm",
+      "exemptions",
     ]);
     if (Object.keys(record).some((key) => !allowed.has(key))) return null;
     if (record.confirm !== true || typeof record.cutoff !== "string") return null;
@@ -1639,6 +1733,9 @@ async function parseAdministrativeDailyPublicationBody(
       topChanges.push(changeId);
     }
 
+    const exemptions = parseAdministrativeDailyExemptions(record.exemptions);
+    if (exemptions === null) return null;
+
     const expectedFreezeKey = record.expectedFreezeKey === undefined || record.expectedFreezeKey === null
       ? null
       : boundedText(record.expectedFreezeKey, 160);
@@ -1646,10 +1743,38 @@ async function parseAdministrativeDailyPublicationBody(
       return null;
     }
 
-    return { cutoff: record.cutoff, headline, summary, topChanges, reason, expectedFreezeKey };
+    return { cutoff: record.cutoff, headline, summary, topChanges, reason, expectedFreezeKey, exemptions };
   } catch {
     return null;
   }
+}
+
+/**
+ * Exemptions are acknowledged coverage gaps, not a way to choose frozen content: only a required
+ * thesis id and a gap id are accepted, at most one per thesis.
+ */
+function parseAdministrativeDailyExemptions(value: unknown): readonly DailyBriefExemption[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > REQUIRED_DAILY_THESIS_IDS.length) return null;
+  const exemptions: DailyBriefExemption[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) return null;
+    const entry = item as Record<string, unknown>;
+    const keys = Object.keys(entry);
+    if (keys.length !== 2 || !keys.includes("thesisId") || !keys.includes("gapId")) return null;
+    const thesisId = entry.thesisId;
+    const gapId = boundedText(entry.gapId, 128);
+    if (
+      typeof thesisId !== "string"
+      || !REQUIRED_DAILY_THESIS_IDS.includes(thesisId as RequiredDailyThesisId)
+      || gapId === null
+      || seen.has(thesisId)
+    ) return null;
+    seen.add(thesisId);
+    exemptions.push({ thesisId: thesisId as RequiredDailyThesisId, gapId });
+  }
+  return exemptions;
 }
 
 interface AdministrativeThesisReviewBody {

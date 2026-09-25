@@ -60,13 +60,14 @@ export class ThesisPublicationModule {
         "论点发布配置缺失或未通过运行时校验",
       );
     }
-    const hasPublicationGap = seed.coverageGaps.some((gap) => gap.blocks.includes("publication"));
+    // D 组口径（2026-09-25，对齐 PRD §8.6 / §18）：覆盖缺口是"必须显示数据覆盖不足 + 封顶置信度"
+    // 的展示与置信度机制，不是发布否决。人工签字的 `readiness.publication` 是唯一发布闸门；
+    // 因此这里不再因为存在 publication 层缺口而拒绝发布。
     if (
       seed.id !== validated.thesisId
       || seed.readiness.reviewStatus !== "approved"
       || !seed.readiness.productionEvaluation
       || !seed.readiness.publication
-      || hasPublicationGap
     ) {
       throw new ThesisPublicationError(
         "PUBLICATION_DISABLED",

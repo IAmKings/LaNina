@@ -72,6 +72,20 @@ describe("DailyPublicationTargetModule", () => {
     expect(stale.blockers).toEqual(["VERSION_NOT_LATEST:MAIZE-SA-01"]);
   });
 
+  it("reports the cutoff candidate version and status for the admin preflight", async () => {
+    const draft = await resolve(publishedVersions({ "RUBBER-TH-01": { status: "draft", version: 3 } }));
+
+    expect(draft.candidateTargets).toEqual(REQUIRED_DAILY_THESIS_IDS.map((thesisId, index) => ({
+      thesisId,
+      thesisVersionId: `version-${index + 1}`,
+      version: thesisId === "RUBBER-TH-01" ? 3 : 2,
+      status: thesisId === "RUBBER-TH-01" ? "draft" : "published",
+    })));
+    // Candidates are a display projection only: the freeze pool still excludes the draft.
+    expect(draft.resolvableTargets.map((target) => target.thesisId))
+      .toEqual(REQUIRED_DAILY_THESIS_IDS.filter((thesisId) => thesisId !== "RUBBER-TH-01"));
+  });
+
   it("refuses a malformed cutoff before consulting storage", async () => {
     const repository = new FakeRepository(publishedVersions());
     const module = new DailyPublicationTargetModule(repository);

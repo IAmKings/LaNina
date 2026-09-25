@@ -123,6 +123,38 @@ describe("D1DailyBriefRepository", () => {
       .rejects.toMatchObject({ code: "DATABASE" });
   });
 
+  it("reports a guarded write failure as a staged database error, not a concurrency conflict", async () => {
+    // 冻结键一致（没有并发竞态），但守卫语句未生效 → 必须给出具体阶段，而不是 VERSION_CONFLICT。
+    const guarded = new ScriptedD1([
+      factResults(),
+      queryBatch([]),
+      queryBatch([]),
+      emptyPublishedRead(),
+      [{ success: true, meta: { changes: 0 } }, ...writeBatch(13)],
+      queryBatch([]),
+      queryBatch([]),
+    ]);
+    await expect(module(guarded).freezeAndPublish(command())).rejects.toMatchObject({
+      code: "DATABASE",
+      details: { stage: "guarded-attempt" },
+    });
+
+    // 守卫通过、某条 link 未生效 → 阶段指向该条 link。
+    const link = new ScriptedD1([
+      factResults(),
+      queryBatch([]),
+      queryBatch([]),
+      emptyPublishedRead(),
+      [...writeBatch(6), { success: true, meta: { changes: 0 } }, ...writeBatch(7)],
+      queryBatch([]),
+      queryBatch([]),
+    ]);
+    await expect(module(link).freezeAndPublish(command())).rejects.toMatchObject({
+      code: "DATABASE",
+      details: { stage: "link:ENSO-CORE-01" },
+    });
+  });
+
   it("freezes the exact previous published brief used as the high-risk baseline", async () => {
     const database = new ScriptedD1([
       factResults({ previousRows: previousFactRows() }),
@@ -341,6 +373,7 @@ function factResults(options: {
     }]),
     queryResult(options.previousRows ?? []),
     queryResult([]),
+    queryResult([]),
   ];
 }
 
@@ -404,11 +437,12 @@ function publishedRead(freezeKey = "daily-brief-freeze-v1:sha256:fake"): unknown
       created_at: attempt.created_at,
     }]),
     queryResult(gateRows("published")),
+    queryResult([]),
   ];
 }
 
 function emptyPublishedRead(): unknown[] {
-  return [queryResult([]), queryResult([]), queryResult([]), queryResult([])];
+  return [queryResult([]), queryResult([]), queryResult([]), queryResult([]), queryResult([])];
 }
 
 function attemptRow(
