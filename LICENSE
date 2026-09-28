@@ -12,12 +12,6 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
-The software provides market-monitoring tooling fed by third-party public
-data sources. Third-party data licenses (NOAA, NASA, World Bank, JPX, USDA FAS,
-EIA, U.S. Census Bureau, UNCTAD) remain those of their respective publishers;
-users are responsible for maintaining their own API credentials and abiding by
-each provider's terms of use and attribution requirements.
-
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE

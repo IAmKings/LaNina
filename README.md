@@ -309,3 +309,11 @@ Cron 或自动发布。`confirmed` 只是人工只读核验结果，不是 stagi
 - [领域知识：实现偏差与既定解释](docs/PRD-ENSO市场影响监测平台.md#21-实现偏差与既定解释2026-09-14)（PRD §21）
 - [领域语言](CONTEXT.md)
 - [研究报告](research/enso_market_impact.md)
+
+## 许可与第三方数据
+
+代码以 MIT 许可发布（见 LICENSE）。本产品的观测与派生数据来自第三方公开数据源（NOAA CPC、
+NASA POWER、USDA FAS PSD、EIA、JPX、World Bank、U.S. Census Bureau、UNCTAD 等），各数据集的
+许可与署名要求归其发布方所有；本项目仅按各来源的权利边界公开派生投影（原始响应与快照不公开），
+使用者需自行维护 API 凭据并遵守各提供方的使用条款与署名要求。来源级的权利边界与签署状态见
+[docs/operations/source-release-register.md](docs/operations/source-release-register.md)。

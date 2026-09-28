@@ -42,7 +42,7 @@ fi
 
 log "[2/6] 敏感扫描（0 = 通过）"
 # 规则串本身就在下面的变量里；扫描时跳过承载规则串的脚本，避免自指误报。
-SECRET_PATTERNS="cfat_[A-Za-z0-9]{20,}|cfut_[A-Za-z0-9]{20,}|KNJKYgbl|HyUMSG|af42922d|fde397a0|38dWjo|0ec40cf3|0d2e707d|w496830083|[a-z0-9._]+@gmail\.com"
+SECRET_PATTERNS="cfat_[A-Za-z0-9]{20,}|cfut_[A-Za-z0-9]{20,}|KNJKYgbl|HyUMSG|af42922d|fde397a0|38dWjo|0ec40cf3|0d2e707d|[a-z0-9-]+\.workers\.dev|[a-z0-9._]+@gmail\.com"
 SELF_SCAN="^(scripts/publish-public-snapshot\.sh|local/publish-gh\.sh|local/pre-publish-scan\.sh)$"
 hits=0
 while IFS= read -r f; do
