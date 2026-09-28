@@ -53,7 +53,7 @@ describe("evaluateStageGates", () => {
     expect(priceOnly).toMatchSnapshot();
   });
 
-  it("never steps into a blocked pressure gate while an easing skip awaits confirmation", () => {
+  it("never steps into a blocked pressure gate while easing is eligible", () => {
     const base = reviewedSeed();
     const seed = decodeThesisSeed({
       ...base,
@@ -78,7 +78,6 @@ describe("evaluateStageGates", () => {
       highestEligibleStage: "easing",
       stage: "weather_realized",
       transition: "blocked",
-      manualConfirmationApplied: false,
     });
     expect(result.checks.find(({ targetStage }) => targetStage === "physical_pressure")).toMatchObject({
       status: "blocked",
@@ -87,32 +86,25 @@ describe("evaluateStageGates", () => {
     expect(result.reasons.map(({ code }) => code)).toContain("FORWARD_SKIP_REQUIRES_CONFIRMATION");
   });
 
-  it("allows only one upward step unless a named manual confirmation explicitly approves the skip", () => {
+  it("allows only one upward step and blocks cross-level eligibility without confirmation", () => {
     const seed = reviewedSeed();
     const allEvidence = selection(seed, ["weather", "physical", "balance", "market"]);
     const blocked = evaluateStageGates(seed, allEvidence, { previousStage: "watch" });
-    const confirmed = evaluateStageGates(seed, allEvidence, {
-      previousStage: "watch",
-      manualConfirmation: { confirmedBy: "reviewer@example.com", reason: "逐层证据已人工复核" },
-    });
 
     expect(blocked).toMatchObject({
       highestEligibleStage: "market_confirmed",
       stage: "weather_realized",
       transition: "blocked",
-      manualConfirmationApplied: false,
     });
-    expect(confirmed).toMatchObject({
-      highestEligibleStage: "market_confirmed",
-      stage: "market_confirmed",
-      transition: "manual_forward_skip",
-      manualConfirmationApplied: true,
-    });
+    expect(blocked.reasons.map(({ code }) => code)).toContain("FORWARD_SKIP_REQUIRES_CONFIRMATION");
+    // D2（2026-09-26 签字）：manual_forward_skip 平行通道已删除，跨级推进只能逐级评估
+    // 或走 admin 高风险审核；同级以内的正常推进不受影响。
+    expect(evaluateStageGates(seed, selection(seed, ["weather"]), { previousStage: "watch" }))
+      .toMatchObject({ stage: "weather_realized", transition: "promoted" });
     expect(blocked).toMatchSnapshot();
-    expect(confirmed).toMatchSnapshot();
   });
 
-  it("does not let manual confirmation bypass missing layers, rules or stage coverage gaps", () => {
+  it("does not let cross-level eligibility bypass missing layers, rules or stage coverage gaps", () => {
     const seed = reviewedSeed({
       coverageGaps: [{
         id: "physical-gap",
@@ -131,14 +123,10 @@ describe("evaluateStageGates", () => {
     const result = evaluateStageGates(
       seed,
       selection(seed, ["weather", "market"], { coverageGapIds: ["physical-gap"] }),
-      {
-        previousStage: "watch",
-        manualConfirmation: { confirmedBy: "reviewer", reason: "只确认状态步进" },
-      },
+      { previousStage: "watch" },
     );
 
     expect(result.stage).toBe("weather_realized");
-    expect(result.manualConfirmationApplied).toBe(false);
     expect(result.reasons).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "MISSING_REQUIRED_LAYER", layer: "physical" }),
       expect.objectContaining({ code: "COVERAGE_GAP", coverageGapId: "physical-gap" }),
@@ -170,7 +158,6 @@ describe("evaluateStageGates", () => {
     });
     const priceOnly = evaluateStageGates(seed, selection(seed, ["market"]), {
       previousStage: "watch",
-      manualConfirmation: { confirmedBy: "reviewer", reason: "cannot override evidence" },
     });
 
     expect(forecastOnly.stage).toBe("watch");
@@ -188,7 +175,6 @@ describe("evaluateStageGates", () => {
     });
     const marketAndControl = evaluateStageGates(seed, selection(seed, ["market", "control"]), {
       previousStage: "watch",
-      manualConfirmation: { confirmedBy: "reviewer", reason: "controls reviewed" },
     });
 
     expect(controlOnly.stage).toBe("watch");
@@ -205,7 +191,6 @@ describe("evaluateStageGates", () => {
         highestEligibleStage: "watch",
         stage: "watch",
         transition: "unchanged",
-        manualConfirmationApplied: false,
       });
       // D 组 D3/D4 签字后（2026-09-24）：规则与门槛已 approved，空选择下不再出现 PENDING_*，
       // 但缺少必需证据层（MISSING_REQUIRED_LAYER）仍必须拦住阶段推进。
@@ -248,7 +233,6 @@ describe("evaluateStageGates", () => {
     if (seed === undefined) throw new TypeError("missing ENSO seed");
     const result = evaluateStageGates(seed, selection(seed, []), {
       previousStage: "watch",
-      manualConfirmation: { confirmedBy: "reviewer", reason: "weather reviewed" },
     });
 
     expect(result.highestEligibleStage).toBe("watch");
@@ -285,7 +269,6 @@ describe("evaluateStageGates", () => {
       highestEligibleStage: "watch",
       stage: "watch",
       transition: "invalid",
-      manualConfirmationApplied: false,
       checks: [],
       reasons: [{
         code: "THESIS_MISMATCH",
@@ -351,27 +334,20 @@ describe("evaluateStageGates", () => {
     }
   });
 
-  it("fails closed for malformed previous-stage and manual-confirmation options", () => {
+  it("fails closed for a malformed previous-stage option", () => {
     const seed = reviewedSeed();
     const current = selection(seed, ["weather", "physical", "balance", "market"]);
     const invalidPreviousStage = evaluateStageGates(seed, current, {
       previousStage: "unknown" as ThesisStage,
     });
-    const invalidConfirmation = evaluateStageGates(seed, current, {
-      previousStage: "watch",
-      manualConfirmation: { confirmedBy: 1, reason: "invalid" } as never,
-    });
 
-    for (const result of [invalidPreviousStage, invalidConfirmation]) {
-      expect(result).toMatchObject({
-        previousStage: "watch",
-        highestEligibleStage: "watch",
-        stage: "watch",
-        transition: "invalid",
-        manualConfirmationApplied: false,
-      });
-      expect(result.reasons[0]?.code).toBe("INVALID_SELECTION");
-    }
+    expect(invalidPreviousStage).toMatchObject({
+      previousStage: "watch",
+      highestEligibleStage: "watch",
+      stage: "watch",
+      transition: "invalid",
+    });
+    expect(invalidPreviousStage.reasons[0]?.code).toBe("INVALID_SELECTION");
   });
 
   it("evaluates numeric rules against the latest selected observation, never an older match", () => {
@@ -480,6 +456,9 @@ function reviewedSeed(overrides: Partial<ThesisSeed> = {}): ThesisSeed {
       sourceTierScores: { A: 100, B: 80, C: 50 },
       missingRequiredLayerCap: null,
       coverageGapCap: null,
+      forecastOnlyCap: null,
+      requiredLayerStaleCap: null,
+      unexplainedConflictCap: null,
     },
     materialChangeThresholds: {
       reviewStatus: "approved",

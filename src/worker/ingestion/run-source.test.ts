@@ -6,6 +6,8 @@ import type {
   SourceAdapter,
 } from "../../domain/ingestion";
 import { SourceCollectionError } from "../../domain/ingestion";
+import { DEFAULT_FETCH_TIMEOUT_MS } from "../adapters/sources/http";
+import { NOAA_RONI_URL, noaaRoniAdapter } from "../adapters/sources/noaa-roni";
 import {
   D1IngestionRepository,
   R2RawSnapshotStore,
@@ -152,7 +154,8 @@ describe("source ingestion vertical slice", () => {
 
     expect(result.run).toMatchObject({ observationsInserted: 24, observationsRevised: 0 });
     expect(database.writeBatchSizes).toContain(26);
-    expect(database.queryCount).toBe(30);
+    // 首采租约后比直接落库多一条原子占位语句（findRun/claim/cursor/health/plan/write）。
+    expect(database.queryCount).toBe(31);
     expect(database.queryCount).toBeLessThanOrEqual(50);
   });
 
@@ -169,8 +172,12 @@ describe("source ingestion vertical slice", () => {
     expect(database.observations).toHaveLength(0);
   });
 
-  it("keeps verified observations from a partial result without marking source health successful", async () => {
+  // D4:B：partial 确实带来了数据——刷新 last_success_at（读取端据此派生 degraded），
+  // 但不清零 consecutive_failures、不清 last_error_code，后续失败按既有逻辑照常累计。
+  it("keeps verified observations from a partial result and refreshes data arrival without clearing failures", async () => {
     const database = new FakeD1();
+    database.source.consecutive_failures = 1;
+    database.source.last_error_code = "NETWORK";
     const resultBody = collected("partial", [observation(1.4)]);
     resultBody.warnings = ["ONE_ROW_REJECTED"];
     const sourceAdapter = adapter(
@@ -182,24 +189,55 @@ describe("source ingestion vertical slice", () => {
       requestFor("2026-09-07T00:00:00.000Z"),
       dependenciesFor(database, new FakeR2(), sourceAdapter),
     );
-    const partialRunSql = database.executedSql.slice();
-    await runSourceIngestion(
-      requestFor("2026-09-08T00:00:00.000Z"),
-      dependenciesFor(database, new FakeR2(), sourceAdapter),
-    );
-
     expect(result).toMatchObject({
       collectionStatus: "partial",
       run: { status: "partial", observationsInserted: 1 },
     });
-    expect(database.observations).toHaveLength(1);
-    expect(partialRunSql.some((sql) => sql.includes("UPDATE sources SET next_due_at"))).toBe(true);
-    expect(partialRunSql.some((sql) => sql.includes("SET last_success_at"))).toBe(false);
+    const partialRunSql = database.executedSql.slice();
+    const partialSourceUpdate = partialRunSql.find((sql) =>
+      sql.includes("UPDATE sources") && sql.includes("SET last_success_at"),
+    );
+    expect(partialSourceUpdate).toBeDefined();
+    expect(partialSourceUpdate).toContain("next_due_at = COALESCE");
+    expect(partialSourceUpdate).not.toContain("consecutive_failures");
+    expect(partialSourceUpdate).not.toContain("last_error_code");
+    // partial 刷新数据到达时刻，但失败计数与错误码保持（不清零、不累加）。
+    expect(database.source.last_success_at).toBe("2026-09-07T00:00:02.000Z");
+    expect(database.source.consecutive_failures).toBe(1);
+    expect(database.source.last_error_code).toBe("NETWORK");
+    await runSourceIngestion(
+      requestFor("2026-09-08T00:00:00.000Z"),
+      dependenciesFor(database, new FakeR2(), sourceAdapter),
+    );
     expect(sourceAdapter.collect.mock.calls[1]?.[0]).toMatchObject({
       previousEtag: null,
       previousLastModified: null,
       previousContentHash: null,
     });
+  });
+
+  // D4:B 恢复路径：partial 之后一次全成功 → healthy，并按既有 recovered 语义记录
+  // 一条 before.status = degraded 的来源健康变化。
+  it("records a degraded recovery fact when a full success follows a partial run", async () => {
+    const database = new FakeD1();
+    const sourceAdapter = adapter(
+      collected("partial", [observation(1.4)]),
+      collected("changed", [observation(1.4)], "b".repeat(64)),
+    );
+
+    await runSourceIngestion(
+      requestFor("2026-09-07T00:00:00.000Z"),
+      dependenciesFor(database, new FakeR2(), sourceAdapter),
+    );
+    expect(database.healthChanges).toBe(0);
+    const recovered = await runSourceIngestion(
+      requestFor("2026-09-08T00:00:00.000Z"),
+      dependenciesFor(database, new FakeR2(), sourceAdapter),
+    );
+
+    expect(recovered).toMatchObject({ collectionStatus: "changed" });
+    expect(database.healthChanges).toBe(1);
+    expect(database.healthChangeBefore).toMatchObject({ status: "degraded", consecutiveFailures: 0 });
   });
 
   it("records failed and never inserts an observation when R2 rejects the snapshot", async () => {
@@ -239,6 +277,8 @@ describe("source ingestion vertical slice", () => {
     ["missing unit", { unit: "" }],
     ["invalid timestamp", { observedAt: "2026-08-31" }],
     ["non-canonical timestamp", { observedAt: "2026-08-31T00:00:00Z" }],
+    ["null numeric value", { value: null as unknown as number }],
+    ["non-finite numeric value", { value: Number.NaN }],
   ] as const)("rejects %s before the success batch", async (_case, invalidFields) => {
     const database = new FakeD1();
     const result = await runSourceIngestion(
@@ -486,6 +526,47 @@ describe("source ingestion vertical slice", () => {
     expect(database.healthChanges).toBe(0);
   });
 
+  it("allows only one concurrent first-run lease to call the adapter", async () => {
+    const database = new FakeD1();
+    const collectAdapter = adapter(collected("unchanged", []));
+    let id = 0;
+    const shared = {
+      adapter: collectAdapter,
+      repository: new D1IngestionRepository(database.asDatabase()),
+      snapshots: new R2RawSnapshotStore(new FakeR2().asBucket()),
+      fetch: vi.fn<typeof fetch>(),
+      createId: () => `lease-${++id}`,
+      now: () => "2026-09-08T00:00:00.000Z",
+    };
+    const request = requestFor("2026-09-08T00:00:00.000Z");
+
+    // cron at-least-once 重放：两个并发的首次调度运行只有一个能原子领取槽位并外采。
+    const outcomes = await Promise.all([
+      runSourceIngestion(request, shared),
+      runSourceIngestion(request, shared),
+    ]);
+
+    expect(collectAdapter.collect).toHaveBeenCalledTimes(1);
+    expect(outcomes.filter((outcome) => outcome.collectionStatus === "unchanged")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.collectionStatus === "already_processed")).toHaveLength(1);
+    expect(database.runs).toHaveLength(1);
+    expect(database.runs[0]).toMatchObject({ status: "unchanged", retry_count: 0 });
+    expect(database.observations).toHaveLength(0);
+  });
+
+  it("does not touch source failure health when claiming the first-run lease", async () => {
+    const database = new FakeD1();
+    await runSourceIngestion(
+      requestFor("2026-09-08T00:00:00.000Z"),
+      dependenciesFor(database, new FakeR2(), adapter(collected("unchanged", []))),
+    );
+
+    // 占位是中性的：领取不产生连续失败计数/错误码，完成后由既有健康路径收口。
+    expect(database.source.consecutive_failures).toBe(0);
+    expect(database.source.last_error_code).toBeNull();
+    expect(database.runs[0]).toMatchObject({ status: "unchanged", error_code: null });
+  });
+
   it("allows only one concurrent retry claim to call the adapter", async () => {
     const database = new FakeD1();
     let currentTime = "2026-09-08T00:00:00.000Z";
@@ -578,6 +659,39 @@ describe("source ingestion vertical slice", () => {
       retry_claim_token: "takeover-worker",
     });
   });
+
+  it("classifies a hung upstream fetch as a retryable NETWORK failure", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const database = new FakeD1();
+      const action = runSourceIngestion(
+        { sourceId: SOURCE_ID, sourceUrl: NOAA_RONI_URL, scheduledAt: "2026-09-07T00:00:00.000Z" },
+        {
+          adapter: noaaRoniAdapter,
+          repository: new D1IngestionRepository(database.asDatabase()),
+          snapshots: new R2RawSnapshotStore(new FakeR2().asBucket()),
+          // 永不 resolve 的假 fetch：来源无响应时不得无限占住运行名额。
+          fetch: vi.fn(async () => new Promise<Response>(() => {})),
+          createId: () => "timeout-run",
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_FETCH_TIMEOUT_MS);
+      const result = await action;
+
+      expect(result).toMatchObject({
+        collectionStatus: "failed",
+        run: { status: "failed", errorCode: "NETWORK" },
+      });
+      // retryable 的落地证据：run 带上 1 分钟后的下一次重试时间（retry #0 → +1min）。
+      expect(result.run.nextRetryAt).not.toBeNull();
+      // 持久层只保留安全文案，不落适配器内部消息。
+      expect(database.runs[0].error_message).toBe("来源网络请求失败");
+      expect(database.observations).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function requestFor(scheduledAt: string) {
@@ -607,7 +721,7 @@ interface FakeRunRow {
   source_id: string;
   scheduled_at: string;
   started_at: string;
-  finished_at: string;
+  finished_at: string | null;
   status: string;
   snapshot_key: string | null;
   content_hash: string | null;
@@ -708,8 +822,24 @@ class FakeD1 {
         (run) => run.source_id === data.values[0] && run.scheduled_at === data.values[1],
       ) ?? null;
     }
-    if (data.sql.includes("FROM sources WHERE id = ?")) {
-      return { ...this.source };
+    // 来源健康查询（含 D4:B 的 last_run_is_partial 派生列）；必须先于 source_runs 游标分支。
+    // 派生语义与真实 SQL 一致：partial 的 finished_at 晚于其余全部完结 run 才视为 1。
+    if (data.sql.includes("AS last_run_is_partial")) {
+      const finished = this.runs.filter((run) => run.finished_at !== null);
+      const partialAt = finished
+        .filter((run) => run.status === "partial")
+        .map((run) => String(run.finished_at))
+        .sort()
+        .at(-1) ?? "";
+      const otherAt = finished
+        .filter((run) => run.status !== "partial")
+        .map((run) => String(run.finished_at))
+        .sort()
+        .at(-1) ?? "";
+      return {
+        ...this.source,
+        last_run_is_partial: partialAt !== "" && partialAt > otherAt ? 1 : 0,
+      };
     }
     if (data.sql.includes("FROM source_runs")) {
       return this.runs
@@ -807,6 +937,25 @@ class FakeD1 {
       run.retry_claim_expires_at = null;
       return 1;
     }
+    if (data.sql.includes("INSERT INTO source_runs") && data.sql.includes("retry_claim_token")) {
+      // 首采租约占位：模拟 UNIQUE(source_id, scheduled_at) —— 冲突抛错（与真实 D1 一致）。
+      const sourceId = String(data.values[1]);
+      const scheduledAt = String(data.values[2]);
+      if (this.runs.some((run) => run.source_id === sourceId && run.scheduled_at === scheduledAt)) {
+        throw new Error(`UNIQUE constraint failed: source_runs.${sourceId}/${scheduledAt}`);
+      }
+      this.runs.push({
+        id: String(data.values[0]), source_id: sourceId, scheduled_at: scheduledAt,
+        started_at: String(data.values[3]), finished_at: null, status: "failed",
+        snapshot_key: null, content_hash: null, etag: null, last_modified: null,
+        observations_inserted: 0, observations_revised: 0,
+        error_code: "VALIDATION", error_message: String(data.values[4]),
+        retry_count: 0, next_retry_at: String(data.values[5]),
+        retry_claim_token: String(data.values[6]),
+        retry_claim_expires_at: String(data.values[7]),
+      });
+      return 1;
+    }
     if (data.sql.includes("INSERT INTO source_runs") && data.sql.includes("'failed'")) {
       this.runs.push({
         id: String(data.values[0]), source_id: String(data.values[1]), scheduled_at: String(data.values[2]),
@@ -835,12 +984,21 @@ class FakeD1 {
     }
     if (data.sql.includes("INSERT INTO observations")) {
       const values = data.values;
+      // revision 由 INSERT…SELECT 内联子查询在写入语句内计算，fake 按同语义对本表求值：
+      // 同 (indicator_id, observed_at) 的最大 revision + 1，无行时为 0。
+      const revision = this.observations
+        .filter(
+          (entry) =>
+            entry.indicator_id === String(values[9]) &&
+            entry.observed_at === String(values[10]),
+        )
+        .reduce((max, entry) => Math.max(max, entry.revision), -1) + 1;
       this.observations.push({
         id: String(values[0]), indicator_id: String(values[1]), observed_at: String(values[2]),
         period_start: values[3] as string | null, value_num: values[4] as number | null,
         value_text: values[5] as string | null, unit: String(values[6]), published_at: values[7] as string | null,
-        revision: Number(values[9]), supersedes_id: values[10] as string | null, quality: String(values[11]),
-        source_run_id: String(values[12]), citation_url: String(values[13]), metadata_json: String(values[14]),
+        revision, supersedes_id: values[11] as string | null, quality: String(values[12]),
+        source_run_id: String(values[13]), citation_url: String(values[14]), metadata_json: String(values[15]),
       });
       return 1;
     }
@@ -850,10 +1008,16 @@ class FakeD1 {
       this.source.next_due_at = (data.values[1] as string | null) ?? this.source.next_due_at;
       return 1;
     }
-    if (data.sql.includes("UPDATE sources") && data.sql.includes("last_success_at")) {
+    if (data.sql.includes("UPDATE sources") && data.sql.includes("consecutive_failures = 0")) {
       this.source.last_success_at = String(data.values[0]);
       this.source.consecutive_failures = 0;
       this.source.last_error_code = null;
+      this.source.next_due_at = (data.values[1] as string | null) ?? this.source.next_due_at;
+      return 1;
+    }
+    if (data.sql.includes("UPDATE sources") && data.sql.includes("SET last_success_at")) {
+      // D4:B partial 分支：只刷新数据到达时刻与 next_due_at，不动失败计数/错误码。
+      this.source.last_success_at = String(data.values[0]);
       this.source.next_due_at = (data.values[1] as string | null) ?? this.source.next_due_at;
       return 1;
     }

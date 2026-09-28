@@ -1,9 +1,28 @@
 import type { ApiEnvelope } from "../domain/contracts";
 import type { AdminDailyPageModel, AdminDailyReviewObligationModel } from "../domain/page-models";
 
-import { formatShanghaiTime } from "./overview-view";
+import { formatShanghaiTime } from "./shanghai-time";
 
 export const MAX_TOP_CHANGES = 3;
+
+/** Submission lifecycle shared by the three daily-brief operations (publish form, batch, reviews). */
+export type AdminDailyOperationStatus = "editing" | "submitting" | "error" | "success";
+
+/**
+ * Mutual exclusion for the three daily-brief operations. While any one of them is submitting (or
+ * the publish form is waiting for its post-submit preflight refresh), every other control must be
+ * disabled: concurrent writes would race the same optimistic-concurrency tokens and freeze key.
+ */
+export function adminDailyControlsBusy(
+  submit: AdminDailyOperationStatus,
+  batch: AdminDailyOperationStatus,
+  review: AdminDailyOperationStatus,
+  preflightLoading: boolean,
+): boolean {
+  return submit === "submitting" || submit === "success"
+    || batch === "submitting" || review === "submitting"
+    || preflightLoading;
+}
 
 export interface DailyPublishDraft {
   readonly headline: string;

@@ -1,0 +1,30 @@
+{
+  "id": "codebase-hardening",
+  "name": "codebase-hardening",
+  "title": "代码库加固：三批修复（P0/P1/重构）",
+  "description": "承载深度分析得出的三批修复任务树：批次一 P0 采集/存储修复、批次二 P1 一致性修复与决策单、批次三结构重构；持有需求集与跨子验收",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "kuluoluo",
+  "assignee": "kuluoluo",
+  "createdAt": "2026-09-25",
+  "completedAt": "2026-09-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-25-p0-pipeline-storage-fixes",
+    "09-25-p1-consistency-fixes",
+    "09-25-structural-refactor"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

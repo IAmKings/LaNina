@@ -148,6 +148,7 @@ export interface OverviewPageModel {
   readonly sourceHealth: {
     readonly healthy: number;
     readonly delayed: number;
+    readonly degraded: number;
     readonly stale: number;
     readonly broken: number;
   };

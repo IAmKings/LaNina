@@ -76,6 +76,26 @@
 - **我方需要拿到**：EIA（必要时含第三方）的书面范围；始终只作为**广义燃油成本控制变量**，
   绝不称船燃、附加费、运力或美东/欧线运价。
 
+### A6. ACP（巴拿马运河管理局）——`SHIP-USEC-01` 两条签字规则的解锁前提（2026-09-28 新增）
+
+- **source / indicator（规划）**：`panama_canal_acp_v1` / `panama_daily_slots`、`panama_max_draft_ft`
+- **已备证据**：[`acp-license-pre-review.md`](acp-license-pre-review.md)（结论：条款要求营利性复制/发表
+  需事先明示授权，无开放许可；数字仅存于新闻稿自由文本；结构化水位在第三方 AQUARIUS 系统）；
+  [ACP Spike](../sources/panama-canal-authority.md)（robots `Crawl-delay: 10`、Authenticated
+  Operations API 宣称 JSON 但需账户/方案）
+- **请求要点（向 ACP 请求事先明示授权，覆盖六项）**：
+  1. 自动访问：按月/按公告事件抓取 ACP 官方公告页与（如可得）Operations API 的**两项事实**——
+     日配额合计与最大吃水（不接受绕过登录系统的抓取）；
+  2. 私有留存：原始响应存私有 R2，不公开；
+  3. 派生展示：仅公开两项数值事实及其变化（≥/≤ 阈值判定），公告正文/图片/标志不复 制不外发；
+  4. 署名：每条投影标注 "Fuente: Autoridad del Canal de Panamá" + 官方 URL + 公告日期，不暗示背书；
+  5. 用途：非商业公开研究发布（气候到市场传导监测）；
+  6. 退出：按 ACP 要求停止收集并删除留存数据的义务。
+- **我方需要拿到**：ACP 书面范围确认（邮件即可，逐字归档到回执登记）；若 ACP 提供 Operations
+  API 账户/方案，先审其条款再选数据通道（新闻稿抽取的可靠性风险由 design 阶段单独评估）。
+- **回执登记**：收到后回填 [source-release-register.md](source-release-register.md) 的 Panama 两行
+  与 [acp-license-pre-review.md](acp-license-pre-review.md) 交接清单。
+
 ### A5. 商业数据候选（合同类，当前为 `restricted` 或 `COVERAGE_GAP`）
 
 | 领域 | 需要的合同或授权 | 影响的论点 |
@@ -85,7 +105,7 @@
 | 橡胶实物 | MRB/LGM、RAOT、DOSM 的抓取/留存/派生/公开字段与 12 个月机器可用性 | `RUBBER-TH-01` |
 | 橡胶日频市场 | SGX SICOM、JPX/OSE、SHFE/INE 一家的企业 EOD 合约（历史、留存、派生、公开再分发、费用、换月、终止删除） | `RUBBER-TH-01` |
 | 棕榈油 / 玉米实测 | MPOB 月度、南非 CEC/Department 预测与 SAGIS 实物流（API/SFTP 或书面许可） | `PALM-SEA-01`、`MAIZE-SA-01` |
-| Panama 一手 | ACP 对自动收集、私有留存、派生、公开展示的书面授权；advisory 仅存 ID/标题/状态/日期/官方 URL | `SHIP-USEC-01` |
+| Panama 一手 | ACP 对自动收集、私有留存、派生、公开展示的书面授权；advisory 仅存 ID/标题/状态/日期/官方 URL（请求已单列 **A6**，2026-09-28） | `SHIP-USEC-01` |
 
 - **已备证据**：[`source-release-register.md`](source-release-register.md) 的"未配置候选与覆盖缺口"表，
   以及 `docs/sources/*.md` 六份 Source Spike。

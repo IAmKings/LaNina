@@ -107,7 +107,7 @@ const fixtures: PageModelFixtures = {
       title: "欧线航运市场确认",
       gapDescription: "SCFI、FBX、Drewry 等欧线运价数据属商业授权来源，尚未接入。",
     }],
-    sourceHealth: { healthy: 2, delayed: 0, stale: 0, broken: 0 },
+    sourceHealth: { healthy: 2, delayed: 0, degraded: 0, stale: 0, broken: 0 },
     freshness: "current",
   },
   staleOverview: {
@@ -117,7 +117,7 @@ const fixtures: PageModelFixtures = {
     topChanges: [],
     theses: [{ ...RUBBER_CARD, freshness: "stale" }],
     coverageGaps: [],
-    sourceHealth: { healthy: 0, delayed: 0, stale: 1, broken: 1 },
+    sourceHealth: { healthy: 0, delayed: 0, degraded: 0, stale: 1, broken: 1 },
     freshness: "stale",
   },
   thesis: {

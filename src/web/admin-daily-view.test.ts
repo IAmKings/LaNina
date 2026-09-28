@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AdminDailyPageModel } from "../domain/page-models";
 import {
+  adminDailyControlsBusy,
   blockerLabel,
   canSubmitDaily,
   dailyCutoffLabel,
@@ -271,3 +272,30 @@ function exemptibleModel(): AdminDailyPageModel {
     }],
   });
 }
+
+describe("admin daily operation mutual exclusion", () => {
+  const idle = "editing" as const;
+
+  it("keeps every control enabled only when all three operations are idle", () => {
+    expect(adminDailyControlsBusy(idle, idle, idle, false)).toBe(false);
+  });
+
+  it("locks all controls while the one-click target publish loop is submitting", () => {
+    expect(adminDailyControlsBusy(idle, "submitting", idle, false)).toBe(true);
+    // Terminal batch states alone do not lock: in the component the post-loop reload keeps the
+    // page busy through `preflightLoading` (a publish or review submission must not start while
+    // the preflight projection may still be refreshing), which the next test covers.
+    expect(adminDailyControlsBusy(idle, "success", idle, false)).toBe(false);
+    expect(adminDailyControlsBusy(idle, "error", idle, false)).toBe(false);
+  });
+
+  it("locks all controls while a high-risk review is being recorded", () => {
+    expect(adminDailyControlsBusy(idle, idle, "submitting", false)).toBe(true);
+    expect(adminDailyControlsBusy("submitting", idle, idle, false)).toBe(true);
+  });
+
+  it("stays busy until the post-submit preflight refresh has landed", () => {
+    expect(adminDailyControlsBusy("success", idle, idle, true)).toBe(true);
+    expect(adminDailyControlsBusy(idle, idle, idle, true)).toBe(true);
+  });
+});

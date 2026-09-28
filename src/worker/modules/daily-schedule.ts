@@ -7,6 +7,7 @@ import {
 import { evaluateDirectionAndConfidence } from "../../domain/direction-confidence";
 import type { EvaluationEvidenceInput } from "../../domain/evaluation";
 import { selectEvidence } from "../../domain/evidence-selector";
+import { deepFreeze } from "../../domain/internal/freeze";
 import { INITIAL_THESIS_SEEDS } from "../../domain/initial-thesis-seeds";
 import { evaluateStageGates } from "../../domain/stage-gate";
 import type { PersistedThesisDraft } from "../../domain/thesis-draft";
@@ -335,11 +336,4 @@ function assertUtcClockTime(value: string, hour: number, minute: number, field: 
       `${field} 必须对应 ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} UTC`,
     );
   }
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  Object.freeze(value);
-  for (const item of Object.values(value)) deepFreeze(item);
-  return value;
 }

@@ -1,4 +1,5 @@
 import { reportStorageFailure } from "./storage-logging";
+import { deepFreeze } from "../../../domain/internal/freeze";
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "../../../domain/contracts";
 import type { ThesisDirection, ThesisStage } from "../../../domain/contracts";
 import type {
@@ -646,10 +647,4 @@ function versionConflict(expectedVersion: number, currentVersion: number | null)
 
 function databaseError(): ThesisPublicationError {
   return new ThesisPublicationError("DATABASE", "D1 无法完成或读取论点发布转换");
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

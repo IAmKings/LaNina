@@ -1,4 +1,5 @@
 import { reportStorageFailure } from "./storage-logging";
+import { deepFreeze } from "../../../domain/internal/freeze";
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "../../../domain/contracts";
 import type {
   DailyBriefExemption,
@@ -18,13 +19,77 @@ import {
   highRiskTriggers,
 } from "../../../domain/daily-brief";
 import { SOURCE_ERROR_CODES } from "../../../domain/ingestion";
-import { calculateSourceHealth } from "../../ingestion/source-health";
+import { calculateSourceHealth, lastRunIsPartialExpression } from "../../ingestion/source-health";
 import type { DailyBriefMutation, DailyBriefRepository } from "../../modules/daily-briefs";
 import { DailyBriefError } from "../../modules/daily-briefs";
 
 const READ_FACT_STATEMENT_COUNT = 6;
 const PUBLISHED_READ_STATEMENT_COUNT = 5;
 const LEGACY_DAILY_BRIEF_FREEZE_PREFIX = "daily-brief-freeze-legacy-v1:";
+
+/**
+ * 冻结发布前重建的每来源健康快照（last_success / consecutive_failures / last_error / degraded）。
+ * D4:B（2026-09-26）：last_success_at 的重建与 live sources.last_success_at 语义一致——
+ * partial 采集也刷新数据到达时刻（status IN ('success','unchanged','partial')）；但
+ * consecutive_failures 的基准保持最近一次「全成功」run（partial 不清零失败计数）。
+ * last_run_is_partial 由 MAX 比较派生（source-health.ts 注释），驱动 degraded 判定。
+ * 四个 source_runs 子查询均按 source_id 等值 + status 过滤 + finished_at 排序取最新，
+ * 依赖 idx_source_runs_source_status_finished；查询计划回归
+ * （cloudflare-read-models-query-plan.test.mjs）引用该固定查询串。
+ */
+export const SOURCE_HEALTH_SNAPSHOT_QUERY = `SELECT source.id, source.late_after_minutes, source.stale_after_minutes,
+        (
+          SELECT successful.finished_at
+            FROM source_runs successful
+           WHERE successful.source_id = source.id
+             AND successful.finished_at IS NOT NULL
+             AND successful.finished_at <= ?
+             AND successful.status IN ('success', 'unchanged', 'partial')
+           ORDER BY successful.finished_at DESC, successful.started_at DESC,
+                    successful.id DESC
+           LIMIT 1
+        ) AS last_success_at,
+        (
+          SELECT COALESCE(SUM(failed.retry_count + 1), 0)
+            FROM source_runs failed
+           WHERE failed.source_id = source.id
+             AND failed.finished_at IS NOT NULL
+             AND failed.finished_at <= ?
+             AND failed.status = 'failed'
+             AND failed.finished_at > COALESCE((
+               SELECT successful.finished_at
+                 FROM source_runs successful
+                WHERE successful.source_id = source.id
+                  AND successful.finished_at IS NOT NULL
+                  AND successful.finished_at <= ?
+                  AND successful.status IN ('success', 'unchanged')
+                ORDER BY successful.finished_at DESC, successful.started_at DESC,
+                         successful.id DESC
+                LIMIT 1
+             ), '')
+        ) AS consecutive_failures,
+        (
+          SELECT CASE WHEN latest.status = 'failed' THEN latest.error_code ELSE NULL END
+            FROM source_runs latest
+           WHERE latest.source_id = source.id
+             AND latest.finished_at IS NOT NULL
+             AND latest.finished_at <= ?
+             AND latest.status <> 'partial'
+           ORDER BY latest.finished_at DESC, latest.started_at DESC, latest.id DESC
+           LIMIT 1
+        ) AS last_error_code,
+        ${lastRunIsPartialExpression("source", true)} AS last_run_is_partial,
+        (
+          SELECT COUNT(*)
+            FROM source_runs rewritten
+           WHERE rewritten.source_id = source.id
+             AND rewritten.retry_count > 0
+             AND rewritten.scheduled_at <= ?
+             AND rewritten.finished_at > ?
+        ) AS ambiguous_retry_rewrites
+   FROM sources source
+  WHERE source.enabled = 1
+  ORDER BY source.id`;
 
 interface VersionGuard {
   readonly id: string;
@@ -52,6 +117,7 @@ interface SourceGuard {
   readonly staleAfterMinutes: number;
   readonly consecutiveFailures: number;
   readonly lastErrorCode: string | null;
+  readonly lastRunIsPartial: number;
   readonly ambiguousRetryRewrites: number;
 }
 
@@ -156,7 +222,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
         `SELECT attempt.freeze_key AS freeze_key
            FROM daily_brief_attempts attempt
           WHERE attempt.brief_date = ?
-          ORDER BY attempt.created_at DESC, attempt.rowid DESC
+          ORDER BY attempt.rowid DESC
           LIMIT 1`,
       ).bind(briefDate).first<{ freeze_key: unknown }>();
       if (row === null) return null;
@@ -278,6 +344,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
       return result;
     } catch (error) {
       if (error instanceof DailyBriefError) throw error;
+      reportStorageFailure("daily-briefs.findPublished", error);
       throw databaseError();
     }
   }
@@ -310,60 +377,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
           WHERE evidence.thesis_version_id IN (${placeholders})
           ORDER BY evidence.thesis_version_id, evidence.sort_order, evidence.id`,
       ).bind(...versionIds),
-      this.database.prepare(
-        `SELECT source.id, source.late_after_minutes, source.stale_after_minutes,
-                (
-                  SELECT successful.finished_at
-                    FROM source_runs successful
-                   WHERE successful.source_id = source.id
-                     AND successful.finished_at IS NOT NULL
-                     AND successful.finished_at <= ?
-                     AND successful.status IN ('success', 'unchanged')
-                   ORDER BY successful.finished_at DESC, successful.started_at DESC,
-                            successful.id DESC
-                   LIMIT 1
-                ) AS last_success_at,
-                (
-                  SELECT COALESCE(SUM(failed.retry_count + 1), 0)
-                    FROM source_runs failed
-                   WHERE failed.source_id = source.id
-                     AND failed.finished_at IS NOT NULL
-                     AND failed.finished_at <= ?
-                     AND failed.status = 'failed'
-                     AND failed.finished_at > COALESCE((
-                       SELECT successful.finished_at
-                         FROM source_runs successful
-                        WHERE successful.source_id = source.id
-                          AND successful.finished_at IS NOT NULL
-                          AND successful.finished_at <= ?
-                          AND successful.status IN ('success', 'unchanged')
-                        ORDER BY successful.finished_at DESC, successful.started_at DESC,
-                                 successful.id DESC
-                        LIMIT 1
-                     ), '')
-                ) AS consecutive_failures,
-                (
-                  SELECT CASE WHEN latest.status = 'failed' THEN latest.error_code ELSE NULL END
-                    FROM source_runs latest
-                   WHERE latest.source_id = source.id
-                     AND latest.finished_at IS NOT NULL
-                     AND latest.finished_at <= ?
-                     AND latest.status <> 'partial'
-                   ORDER BY latest.finished_at DESC, latest.started_at DESC, latest.id DESC
-                   LIMIT 1
-                ) AS last_error_code,
-                (
-                  SELECT COUNT(*)
-                    FROM source_runs rewritten
-                   WHERE rewritten.source_id = source.id
-                     AND rewritten.retry_count > 0
-                     AND rewritten.scheduled_at <= ?
-                     AND rewritten.finished_at > ?
-                ) AS ambiguous_retry_rewrites
-           FROM sources source
-          WHERE source.enabled = 1
-          ORDER BY source.id`,
-      ).bind(
+      this.database.prepare(SOURCE_HEALTH_SNAPSHOT_QUERY).bind(
         mutation.cutoff,
         mutation.cutoff,
         mutation.cutoff,
@@ -671,7 +685,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
             SELECT latest_attempt.freeze_key
               FROM daily_brief_attempts latest_attempt
              WHERE latest_attempt.brief_date = ?
-             ORDER BY latest_attempt.created_at DESC, latest_attempt.rowid DESC
+             ORDER BY latest_attempt.rowid DESC
              LIMIT 1
           ), '') = COALESCE(?, '')
             AND NOT EXISTS (
@@ -727,7 +741,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
                        WHERE successful.source_id = guarded_source.id
                          AND successful.finished_at IS NOT NULL
                          AND successful.finished_at <= ?
-                         AND successful.status IN ('success', 'unchanged')
+                         AND successful.status IN ('success', 'unchanged', 'partial')
                        ORDER BY successful.finished_at DESC, successful.started_at DESC,
                                 successful.id DESC
                        LIMIT 1
@@ -761,6 +775,8 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
                        ORDER BY latest.finished_at DESC, latest.started_at DESC, latest.id DESC
                        LIMIT 1
                     ) IS json_extract(guard.value, '$.lastErrorCode')
+                    AND ${lastRunIsPartialExpression("guarded_source", true)}
+                      = json_extract(guard.value, '$.lastRunIsPartial')
                     AND (
                       SELECT COUNT(*)
                         FROM source_runs rewritten
@@ -864,6 +880,8 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
       mutation.cutoff,
       mutation.cutoff,
       mutation.cutoff,
+      mutation.cutoff,
+      mutation.cutoff,
       reviewGuardJson,
       previousGuardJson,
       mutation.briefDate,
@@ -893,7 +911,7 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
             SELECT latest_attempt.freeze_key
               FROM daily_brief_attempts latest_attempt
              WHERE latest_attempt.brief_date = ?
-             ORDER BY latest_attempt.created_at DESC, latest_attempt.rowid DESC
+             ORDER BY latest_attempt.rowid DESC
              LIMIT 1
           ), '') = COALESCE(?, '')
             AND NOT EXISTS (
@@ -958,8 +976,10 @@ export class D1DailyBriefRepository implements DailyBriefRepository {
   }
 
   private async findLatestAttempt(briefDate: string): Promise<DailyBriefResult | null> {
+    // rowid 单调递增、天然反映插入序；created_at 是操作方提供的不可信值，不能作为
+    // 乐观锁「最新 attempt」的排序键（否则可被伪造制造并发冲突/绕过冲突检测）。
     const result = await this.readAttempt(
-      `attempt.brief_date = ? ORDER BY attempt.created_at DESC, attempt.rowid DESC`,
+      `attempt.brief_date = ? ORDER BY attempt.rowid DESC`,
       [briefDate],
     );
     if (result !== null && result.briefDate !== briefDate) throw databaseError();
@@ -1082,7 +1102,7 @@ function decodeEvidenceGuard(row: Record<string, unknown>): EvidenceGuard {
 function decodeSourceGuard(row: Record<string, unknown>): SourceGuard {
   const item = exactRecord(row, [
     "id", "last_success_at", "late_after_minutes", "stale_after_minutes",
-    "consecutive_failures", "last_error_code", "ambiguous_retry_rewrites",
+    "consecutive_failures", "last_error_code", "last_run_is_partial", "ambiguous_retry_rewrites",
   ]);
   const lastErrorCode = item.last_error_code === null
     ? null
@@ -1094,6 +1114,7 @@ function decodeSourceGuard(row: Record<string, unknown>): SourceGuard {
     staleAfterMinutes: integer(item.stale_after_minutes, 0),
     consecutiveFailures: integer(item.consecutive_failures, 0),
     lastErrorCode,
+    lastRunIsPartial: integer(item.last_run_is_partial, 0),
     ambiguousRetryRewrites: integer(item.ambiguous_retry_rewrites, 0),
   };
 }
@@ -1252,7 +1273,7 @@ function decodeSourceHealth(
 ): DailyBriefSourceHealthSnapshot {
   const item = exactRecord(row, [
     "id", "last_success_at", "late_after_minutes", "stale_after_minutes",
-    "consecutive_failures", "last_error_code", "ambiguous_retry_rewrites",
+    "consecutive_failures", "last_error_code", "last_run_is_partial", "ambiguous_retry_rewrites",
   ]);
   if (integer(item.ambiguous_retry_rewrites, 0) > 0) throw databaseError();
   const lastError = item.last_error_code === null
@@ -1266,6 +1287,7 @@ function decodeSourceHealth(
     staleAfterMinutes: integer(item.stale_after_minutes, 0),
     consecutiveFailures: integer(item.consecutive_failures, 0),
     lastErrorCode: lastError,
+    lastRunIsPartial: integer(item.last_run_is_partial, 0) === 1,
   });
   return health;
 }
@@ -1478,7 +1500,8 @@ function decodeSourceSnapshotJson(value: unknown, cutoff: string): readonly Dail
     seen.add(sourceId);
     return {
       sourceId,
-      status: enumValue(item.status, ["healthy", "delayed", "stale", "broken"] as const),
+      // degraded（D4:B）只出现在新冻结的快照里；既有四值保持接受，历史冻结读取不变。
+      status: enumValue(item.status, ["healthy", "delayed", "degraded", "stale", "broken"] as const),
       checkedAt: canonicalUtc(item.checkedAt),
       lastSuccessAt: nullableCanonicalUtc(item.lastSuccessAt),
       consecutiveFailures: integer(item.consecutiveFailures, 0),
@@ -1659,10 +1682,4 @@ function conflict(expectedFreezeKey: string | null, currentFreezeKey: string | n
 
 function databaseError(details: Readonly<Record<string, unknown>> | null = null): DailyBriefError {
   return new DailyBriefError("DATABASE", "D1 无法完成或读取每日判定冻结", details);
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

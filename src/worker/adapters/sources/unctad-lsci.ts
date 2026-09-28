@@ -5,7 +5,7 @@ import type {
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
-import { readBodyWithinLimit, sha256Hex } from "./http";
+import { fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
 
 export const UNCTAD_SOURCE_ID = "unctad_datahub_lsci";
 export const UNCTAD_ADAPTER_KEY = "unctad-lsci-v1";
@@ -34,6 +34,7 @@ export function monthWindow(scheduledAt: string, count: number): readonly string
 }
 const TARGET_ECONOMY = "China";
 const TARGET_ECONOMY_CODE = "140";
+/** 回溯窗口上限：发布滞后约 2 个月，再多取 2 个月余量；循环固定窗口内推进，不会无限回溯。 */
 const MONTH_BACKTRACK = 4;
 const MAX_RESPONSE_BYTES = 512_000;
 
@@ -64,11 +65,14 @@ export function createUnctadLsciAdapter(
           context, credentials.clientId, credentials.apiKey, month,
         );
         lastRawBody = fetched.rawBody;
+        // 回溯口径（2026-09-25 决策）：$filter 已在服务端限定 Economy/Code=140（冻结契约），
+        // 因此以「响应行为空」为该月未发布的判定；若响应有行但过滤 China 后为空（过滤
+        // 契约失效的防御场景），同样 continue 回溯上一月，而不是收口成空观测。
         if (fetched.rows.length === 0) continue; // 该月数据未发布（发布滞后约 2 个月）
-        observations.push(...fetched.rows
-          .filter((row) => row.Economy?.Label === TARGET_ECONOMY)
-          .map((row) => toObservationInput(row, context.fetchedAt)));
-        break; // 第一个已发布的月即收口
+        const chinaRows = fetched.rows.filter((row) => row.Economy?.Label === TARGET_ECONOMY);
+        if (chinaRows.length === 0) continue; // 当月有行但缺 China → 回溯上一月
+        observations.push(...chinaRows.map((row) => toObservationInput(row, context.fetchedAt)));
+        break; // 第一个含 China 行的已发布月即收口
       }
       if (observations.length === 0) {
         throw new SourceCollectionError("VALIDATION", "UNCTAD 窗口内没有可落库的月度观测");
@@ -111,10 +115,12 @@ async function fetchFactsMonthRaw(
 ): Promise<FactsFetch> {
   const url = new URL(context.sourceUrl);
   url.searchParams.set("$select", "Month,Economy,M4023");
-  url.searchParams.set("$filter", `Month/Code eq '${month}'`);
+  // 2026-09-22 live 冻结契约：单请求必须同时限定 Month 与 Economy/Code（见文件头注释），
+  // 缺 Economy 约束会把全部经济体的同一月份拉进响应体。
+  url.searchParams.set("$filter", `Month/Code eq '${month}' and Economy/Code eq '${TARGET_ECONOMY_CODE}'`);
   let response: Response;
   try {
-    response = await context.fetch(url, {
+    response = await fetchWithinTimeout(context.fetch, url, {
       headers: new Headers({
         Accept: "*/*",
         ClientId: clientId,
@@ -145,8 +151,16 @@ function toObservationInput(
   row: FactRow,
   fetchedAt: string,
 ): ObservationInput {
-  const month = row.Month?.Code as string;
-  const value = (row[LSCI_MEASURE] as { Value?: number | null }).Value as number;
+  const month = row.Month?.Code;
+  if (typeof month !== "string" || !/^\d{4}M\d{2}$/.test(month)) {
+    throw new SourceCollectionError("SCHEMA_DRIFT", "UNCTAD Month/Code 结构漂移");
+  }
+  // fail-closed：上游把缺失月份返回成 null/字符串时，`as number` 强转会静默落库坏数据，
+  // 这里必须显式拒绝（非有限数一律 SCHEMA_DRIFT）。
+  const value = row[LSCI_MEASURE]?.Value;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new SourceCollectionError("SCHEMA_DRIFT", "UNCTAD LSCI 数值缺失或不是有限数");
+  }
   const year = Number(month.slice(0, 4));
   const monthIx = Number(month.slice(5, 7));
   const monthEnd = new Date(Date.UTC(year, monthIx, 0));

@@ -18,7 +18,7 @@ describe("buildThesisDraftStorageRecord", () => {
       status: "draft",
       direction: "bullish",
       stage: "weather_realized",
-      confidence: 88,
+      confidence: 92,
       summary: candidate.summary,
       invalidation: candidate.invalidation,
       calculation: {
@@ -208,13 +208,19 @@ describe("buildThesisDraftStorageRecord", () => {
     )).rejects.toMatchObject({ code: "VALIDATION" });
   });
 
-  it("rejects empty selected evidence and manual-stage payloads", async () => {
+  it("rejects empty selected evidence and stale stage-result payloads", async () => {
     await expect(buildThesisDraftStorageRecord(makeDraftCandidate({ inputs: [] })))
       .rejects.toThrow(/不可用|至少需要一条/);
     const candidate = makeDraftCandidate();
+    // D2 删除了 manualConfirmationApplied/manual_forward_skip；携带已退役标记的载荷
+    // 无法与可信重建结果一致，必须拒绝（纵深防御）。
+    const staleStageResult = JSON.parse(JSON.stringify({
+      ...candidate.stageResult,
+      manualConfirmationApplied: false,
+    }));
     await expect(buildThesisDraftStorageRecord({
       ...candidate,
-      stageResult: { ...candidate.stageResult, manualConfirmationApplied: true },
+      stageResult: staleStageResult,
     })).rejects.toThrow(/阶段结果/);
   });
 
@@ -243,5 +249,32 @@ describe("buildThesisDraftStorageRecord", () => {
       await expect(buildThesisDraftStorageRecord({ ...candidate, seed }))
         .rejects.toBeInstanceOf(ThesisDraftValidationError);
     }
+  });
+
+  it("refuses drafts while the D1 guard keeps direction unavailable", async () => {
+    // 每日简报的方向高风险触发（DIRECTION_CHANGE）只作用于已发布版本；方向 unavailable 时
+    // 本函数必须先行拒绝，使该论点根本无法产生草稿/版本（daily-schedule 侧对应
+    // DIRECTION_UNAVAILABLE 阻断），简报触发语义因此保持不变。
+    const base = approvedDraftSeed();
+    const guardedSeed = decodeThesisSeed({
+      ...base,
+      supportRules: base.supportRules.map((rule) => rule.id === "support-present"
+        ? {
+            id: "support-present",
+            label: "support present",
+            reviewStatus: "approved" as const,
+            active: true,
+            predicate: {
+              kind: "selector_present" as const,
+              selectorIds: ["weather-support"],
+              minimumMatches: 1,
+            },
+          }
+        : rule),
+    });
+    const candidate = makeDraftCandidate({ seed: guardedSeed });
+    expect(candidate.evaluation.direction.status).toBe("unavailable");
+    await expect(buildThesisDraftStorageRecord(candidate))
+      .rejects.toThrow(/方向或置信度不可用/);
   });
 });

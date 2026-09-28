@@ -1,4 +1,5 @@
 import { canonicalJson } from "../../../domain/canonical-json";
+import { deepFreeze } from "../../../domain/internal/freeze";
 import { reportStorageFailure } from "./storage-logging";
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "../../../domain/contracts";
 import type { ThesisDirection, ThesisStage } from "../../../domain/contracts";
@@ -617,8 +618,6 @@ function calculationValue(
     || stage.previousStage !== previousStage
     || stage.stage !== outer.stage
     || stage.transition === "invalid"
-    || stage.transition === "manual_forward_skip"
-    || stage.manualConfirmationApplied !== false
     || direction.thesisId !== outer.thesisId
     || direction.methodologyVersion !== methodologyVersion
     || direction.regionDefinitionVersion !== regionDefinitionVersion
@@ -735,13 +734,12 @@ function assertSubset(values: readonly string[], selectedIds: ReadonlySet<string
 function validateCalculationStage(value: unknown): Record<string, unknown> {
   const item = exactRecord(value, [
     "thesisId", "cutoff", "previousStage", "highestEligibleStage", "stage", "transition",
-    "manualConfirmationApplied", "checks", "reasons",
+    "checks", "reasons",
   ]);
   enumValue(item.previousStage, THESIS_STAGES, "calculation.stage.previousStage");
   enumValue(item.highestEligibleStage, THESIS_STAGES, "calculation.stage.highestEligibleStage");
   enumValue(item.stage, THESIS_STAGES, "calculation.stage.stage");
-  enumValue(item.transition, ["unchanged", "promoted", "manual_forward_skip", "downgraded", "blocked", "invalid"] as const, "calculation.stage.transition");
-  booleanValue(item.manualConfirmationApplied);
+  enumValue(item.transition, ["unchanged", "promoted", "downgraded", "blocked", "invalid"] as const, "calculation.stage.transition");
   if (!Array.isArray(item.checks) || !Array.isArray(item.reasons)) throw databaseError();
   for (const checkValue of item.checks) {
     const check = exactRecord(checkValue, [
@@ -893,11 +891,6 @@ function uniqueStrings(values: readonly string[]): void {
   if (new Set(values).size !== values.length) throw databaseError();
 }
 
-function booleanValue(value: unknown): boolean {
-  if (typeof value !== "boolean") throw databaseError();
-  return value;
-}
-
 function enumValue<const T extends readonly string[]>(value: unknown, values: T, field: string): T[number] {
   void field;
   if (typeof value !== "string" || !values.includes(value)) throw databaseError();
@@ -994,10 +987,4 @@ function writeChanges(result: unknown): number {
 
 function databaseError(): ThesisDraftError {
   return new ThesisDraftError("DATABASE", "D1 无法持久化或读取论点草稿");
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

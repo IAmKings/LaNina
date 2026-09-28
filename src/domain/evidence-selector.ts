@@ -5,6 +5,9 @@ import type {
   RejectedEvidence,
   SelectedEvidence,
 } from "./evaluation";
+import { compareText } from "./internal/compare";
+import { deepFreeze } from "./internal/freeze";
+import { parseCanonicalUtc } from "./internal/time";
 import type { IndicatorSelector, ThesisSeed } from "./thesis-seeds";
 
 interface EligibleCandidate {
@@ -31,7 +34,18 @@ export function selectEvidence(
   const selectedEvidence: SelectedEvidence[] = [];
   const rejectedEvidence: RejectedEvidence[] = [];
 
+  const seenEvidenceIds = new Set<string>();
   for (const input of inputs) {
+    // 重复 evidenceId 是调用方契约违规而非可解释的单条拒绝：同一证据身份出现两次时，
+    // 「最新 revision」与解释归属都无法定义，必须在选择前 fail closed（对齐 stage-gate
+    // 迟到校验的 INVALID_SELECTION 语义，但把根因提前暴露给调用方）。
+    if (seenEvidenceIds.has(input.evidenceId)) {
+      throw new TypeError(
+        `INVALID_SELECTION: 输入证据 evidenceId ${JSON.stringify(input.evidenceId)} 重复；`
+          + "证据身份必须唯一，请调用方按 (indicatorId, observedAt, revision) 去重后重试",
+      );
+    }
+    seenEvidenceIds.add(input.evidenceId);
     const selector = selectorsByIndicator.get(input.indicatorId);
     const identityRejection = validateRevisionIdentity(input, selector);
     if (identityRejection !== null) {
@@ -239,12 +253,6 @@ function parseRequiredCanonicalUtc(value: string, field: string): number {
   return parsed;
 }
 
-function parseCanonicalUtc(value: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) || new Date(parsed).toISOString() !== value ? null : parsed;
-}
-
 function compareEvidence(left: EvaluationEvidenceInput, right: EvaluationEvidenceInput): number {
   return compareText(left.indicatorId, right.indicatorId)
     || compareText(left.observedAt, right.observedAt)
@@ -287,14 +295,4 @@ function compareRejected(left: RejectedEvidence, right: RejectedEvidence): numbe
     || compareText(left.indicatorId, right.indicatorId)
     || compareText(left.evidenceId ?? "", right.evidenceId ?? "")
     || compareText(left.code, right.code);
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

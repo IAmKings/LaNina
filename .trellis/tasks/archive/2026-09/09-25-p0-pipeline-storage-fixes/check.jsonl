@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "backend 质量门禁与检查清单"}
+{"file": ".trellis/spec/backend/index.md", "reason": "backend Quality Check 入口"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量检查"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层一致性思考指南（本批横跨采集/存储/worker/前端）"}

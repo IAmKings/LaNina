@@ -1,3 +1,5 @@
+import { compareText } from "./internal/compare";
+
 export function canonicalJson(value: unknown): string {
   return canonicalJsonValue(value, new Set<object>(), "$?");
 }
@@ -43,8 +45,4 @@ function canonicalJsonValue(value: unknown, parents: Set<object>, path: string):
   } finally {
     parents.delete(value);
   }
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }

@@ -15,7 +15,8 @@ import type {
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
 import { parseCanonicalUtc } from "../../ingestion/time";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
+import { decodeUtf8, unchangedResult } from "./adapter-base";
 
 export const NASA_POWER_RAINFALL_ADAPTER_KEY = "nasa-power-regional-rainfall-v1";
 export const NASA_POWER_DAILY_POINT_URL =
@@ -94,10 +95,11 @@ export const nasaPowerRegionalRainfallAdapter: SourceAdapter = {
       const requestUrl = buildRequestUrl(point.latitude, point.longitude, dates[0], dates.at(-1)!);
       let response: Response;
       try {
-        response = await context.fetch(requestUrl, {
-          headers: { Accept: "application/json" },
-          redirect: "manual",
-        });
+        response = await fetchWithinTimeout(
+          context.fetch,
+          requestUrl,
+          { headers: { Accept: "application/json" }, redirect: "manual" },
+        );
       } catch (error) {
         throw new SourceCollectionError("NETWORK", "无法连接 NASA POWER", { retryable: true, cause: error });
       }
@@ -108,7 +110,7 @@ export const nasaPowerRegionalRainfallAdapter: SourceAdapter = {
       }
 
       const rawBytes = await readBodyWithinLimit(response, NASA_POWER_POINT_MAX_BYTES);
-      const rawBody = decodeUtf8(rawBytes);
+      const rawBody = decodeUtf8(rawBytes, "NASA POWER 响应不是有效 UTF-8");
       collected.push({
         pointId: point.id,
         requestUrl,
@@ -124,7 +126,12 @@ export const nasaPowerRegionalRainfallAdapter: SourceAdapter = {
     }
     const contentHash = await sha256Hex(bundle);
     if (contentHash === context.previousContentHash) {
-      return unchangedResult(context, contentHash);
+      return unchangedResult(context, {
+        etag: null,
+        lastModified: null,
+        contentType: "application/json; charset=UTF-8",
+        contentHash,
+      });
     }
 
     const { observations, warnings } = aggregate(
@@ -191,14 +198,6 @@ function buildRequestUrl(
   url.searchParams.set("format", "JSON");
   url.searchParams.set("time-standard", "UTC");
   return url.toString();
-}
-
-function decodeUtf8(bytes: Uint8Array): string {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw new SourceCollectionError("SCHEMA_DRIFT", "NASA POWER 响应不是有效 UTF-8");
-  }
 }
 
 function parsePointResponse(
@@ -402,20 +401,4 @@ function displayDate(compact: string): string {
 
 function roundFour(value: number): number {
   return Math.round((value + Number.EPSILON) * 10_000) / 10_000;
-}
-
-function unchangedResult(context: CollectContext, contentHash: string): CollectResult {
-  return {
-    sourceId: context.sourceId,
-    fetchedAt: context.fetchedAt,
-    sourcePublishedAt: null,
-    etag: null,
-    lastModified: null,
-    contentType: "application/json; charset=UTF-8",
-    contentHash,
-    rawBody: null,
-    observations: [],
-    warnings: [],
-    status: "unchanged",
-  };
 }

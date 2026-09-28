@@ -4,6 +4,7 @@ import type {
   AdminRunModel,
   AdminRunsPageModel,
 } from "../../../domain/page-models";
+import { deepFreeze } from "../../../domain/internal/freeze";
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "../../../domain/contracts";
 import { SOURCE_ERROR_CODES, type SourceErrorCode } from "../../../domain/ingestion";
 import type { AdminRunsCursor, AdminReadModelRepository } from "../../modules/admin-read-models";
@@ -269,10 +270,4 @@ function assertCursor(cursor: AdminRunsCursor): void {
 
 function encodeCursor(run: AdminRunModel): string {
   return JSON.stringify({ scheduledAt: run.scheduledAt, id: run.id });
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

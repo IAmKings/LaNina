@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门禁"}
+{"file": ".trellis/spec/backend/source-ingestion.md", "reason": "采集契约（派生计算消费现有观测）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移与观测追加写规范"}

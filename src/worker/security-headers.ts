@@ -20,6 +20,9 @@ export const SECURITY_RESPONSE_HEADERS = {
     "worker-src 'self'",
   ].join("; "),
   "permissions-policy": "accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), usb=(), web-share=()",
+  // 隔离浏览上下文（防跨窗口攻击）并禁止跨源读取本站资源；静态资源经 public/_headers 声明同款。
+  "cross-origin-opener-policy": "same-origin",
+  "cross-origin-resource-policy": "same-origin",
   "referrer-policy": "strict-origin-when-cross-origin",
   // This enables browser HSTS for the served host; omitting `preload` makes no preload-list claim.
   "strict-transport-security": "max-age=31536000; includeSubDomains",

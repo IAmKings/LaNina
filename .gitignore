@@ -35,3 +35,4 @@ skills-lock.json
 .dsh/
 # 本地私有目录（不上传 GitHub）：开源节奏脚本与说明
 local/
+.zcode/

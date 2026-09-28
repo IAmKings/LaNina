@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "backend 入口与 checklist"}
+{"file": ".trellis/spec/backend/source-ingestion.md", "reason": "采集语义约定（租约/解码/错误分类）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "D1 查询/迁移/追加写规范（0012、revision 内联）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误分类与 retryable 语义"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "storage-logging 与结构化日志规范"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端入口（A5）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "AdminDailyPage 互斥/加载状态的状态约定"}

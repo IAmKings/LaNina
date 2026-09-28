@@ -2,18 +2,33 @@
  * Minimal XLSX reader for single-sheet extraction inside a Worker.
  *
  * Scope is deliberately narrow: World Bank's Pink Sheet monthly workbook is ~587 KiB ZIP with
- * deflate; this module reads the ZIP central directory, decompresses only the needed entries
- * (`DecompressionStream('deflate-raw')`) and exposes worksheet rows as cell maps. Stored
- * (method 0) entries are also supported so tests can build deterministic in-repo fixtures
- * without committing any third-party bytes.
+ * deflate; this module reads the ZIP central directory and decompresses ONLY the entries the
+ * workbook consumer needs (`xl/workbook.xml`, `xl/_rels/workbook.xml.rels`,
+ * `xl/sharedStrings.xml`, `xl/worksheets/sheet*.xml`) through
+ * `DecompressionStream('deflate-raw')`; any other entry is skipped without inflating, and the
+ * cumulative decompressed output is capped (`MAX_DECOMPRESSED_BYTES`) so a zip bomb aborts as
+ * SCHEMA_DRIFT instead of exhausting memory. Stored (method 0) entries are also supported so
+ * tests can build deterministic in-repo fixtures without committing any third-party bytes.
  *
  * Out of scope: styles, merges, formulas, charts. Anything unexpected throws so the adapter
  * surfaces SCHEMA_DRIFT instead of silently mis-reading.
  */
 
+import { SourceCollectionError } from "../../../domain/ingestion";
+
 const EOCD = new Uint8Array([0x50, 0x4b, 0x05, 0x06]);
 const CENTRAL = 0x02014b50;
 const LOCAL = 0x04034b50;
+
+/** 解压输出总上限：超过即判定为 zip 炸弹，fail-closed（正常工作簿 < 1 MiB）。 */
+export const MAX_DECOMPRESSED_BYTES = 16 * 1024 * 1024;
+
+/**
+ * 只解压消费方真正读取的条目。`xl/_rels/workbook.xml.rels` 是 workbook sheet 名 →
+ * sheetN.xml 的关系映射，与三个 XML 同属必需集合。
+ */
+const TARGET_ENTRY_PATTERN =
+  /^(?:xl\/workbook\.xml|xl\/_rels\/workbook\.xml\.rels|xl\/sharedStrings\.xml|xl\/worksheets\/sheet\d+\.xml)$/;
 
 export interface ParsedSheetRow {
   readonly rowNumber: number;
@@ -29,15 +44,32 @@ function matchesSignature(bytes: Uint8Array, offset: number, signature: Uint8Arr
   return true;
 }
 
-async function inflateRaw(compressed: Uint8Array): Promise<Uint8Array> {
+async function inflateRawWithinLimit(
+  compressed: Uint8Array,
+  budget: { remaining: number },
+): Promise<Uint8Array> {
   const bytes = new Uint8Array(compressed.byteLength);
   bytes.set(compressed);
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  const counter = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      budget.remaining -= chunk.byteLength;
+      if (budget.remaining < 0) {
+        // error() 同时中断读取侧与解压管道，不会把剩余输出继续物化进内存。
+        controller.error(new SourceCollectionError("SCHEMA_DRIFT", "XLSX 解压输出超过允许大小"));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+  const stream = new Blob([bytes])
+    .stream()
+    .pipeThrough(new DecompressionStream("deflate-raw"))
+    .pipeThrough(counter);
   const buffer = await new Response(stream).arrayBuffer();
   return new Uint8Array(buffer);
 }
 
-/** 解包并解压 XLSX（ZIP）全部条目。 */
+/** 解包 XLSX（ZIP）：仅解压目标条目（见 TARGET_ENTRY_PATTERN），其余条目跳过不 inflate。 */
 export async function readXlsxEntities(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
   const searchStart = Math.max(0, bytes.length - 66);
   let eocd: number = -1;
@@ -49,6 +81,7 @@ export async function readXlsxEntities(bytes: Uint8Array): Promise<Map<string, U
   const entryCount = view.getUint16(eocd + 10, true);
   let offset = view.getUint32(eocd + 16, true);
   const entries = new Map<string, Uint8Array>();
+  const budget = { remaining: MAX_DECOMPRESSED_BYTES };
   for (let index = 0; index < entryCount; index += 1) {
     if (view.getUint32(offset, true) !== CENTRAL) throw new Error("XLSX central directory 签名不符");
     const method = view.getUint16(offset + 10, true);
@@ -59,18 +92,21 @@ export async function readXlsxEntities(bytes: Uint8Array): Promise<Map<string, U
     const localHeaderOffset = view.getUint32(offset + 42, true);
     const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength);
     const name = new TextDecoder("latin1").decode(nameBytes);
-    const localFixed = view.getUint32(localHeaderOffset, true);
-    if (localFixed !== LOCAL) throw new Error("XLSX local header 签名不符");
-    const localNameLength = view.getUint16(localHeaderOffset + 26, true);
-    const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
-    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
-    const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
-    if (method === 8) {
-      entries.set(name, await inflateRaw(compressed));
-    } else if (method === 0) {
-      entries.set(name, compressed.slice());
-    } else {
-      throw new Error(`不支持的 ZIP 压缩方式 ${method}（条目 ${name}）`);
+    const targeted = TARGET_ENTRY_PATTERN.test(name);
+    if (targeted) {
+      const localFixed = view.getUint32(localHeaderOffset, true);
+      if (localFixed !== LOCAL) throw new Error("XLSX local header 签名不符");
+      const localNameLength = view.getUint16(localHeaderOffset + 26, true);
+      const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
+      const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+      const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
+      if (method === 8) {
+        entries.set(name, await inflateRawWithinLimit(compressed, budget));
+      } else if (method === 0) {
+        entries.set(name, compressed.slice());
+      } else {
+        throw new Error(`不支持的 ZIP 压缩方式 ${method}（条目 ${name}）`);
+      }
     }
     offset += 46 + nameLength + extraLength + commentLength;
   }

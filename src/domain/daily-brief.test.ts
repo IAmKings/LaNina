@@ -164,7 +164,7 @@ describe("daily brief freeze identity and time boundary", () => {
       targets: input.targets,
       headline: "今日影响判定",
       summary: "六论点冻结完成",
-      topChanges: ["无重大变化"],
+      topChanges: ["压载水公约生效", "巴拿马水位回升", "无重大变化"],
       versions: input.versions,
       sourceHealth: input.sourceHealth,
     };
@@ -174,6 +174,8 @@ describe("daily brief freeze identity and time boundary", () => {
         targets: [...material.targets].reverse(),
         versions: [...material.versions].reverse(),
         sourceHealth: [...material.sourceHealth].reverse(),
+        // topChanges 只约束幂等键：展示顺序由存储数组保序，哈希前排序保证同语义同 key。
+        topChanges: [...material.topChanges].reverse(),
       }),
     );
   });

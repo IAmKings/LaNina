@@ -1,4 +1,5 @@
 import { reportStorageFailure } from "./storage-logging";
+import { deepFreeze } from "../../../domain/internal/freeze";
 import { INITIAL_THESIS_SEEDS } from "../../../domain/initial-thesis-seeds";
 import { coverageGapDescription } from "../../../domain/coverage-gaps";
 import type { AtomDailyBriefModel, AtomFeedModel } from "../../../domain/atom-feed";
@@ -27,7 +28,7 @@ import type {
 import { REQUIRED_DAILY_THESIS_IDS } from "../../../domain/daily-brief";
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "../../../domain/contracts";
 import { SOURCE_ERROR_CODES, type SourceErrorCode, type SourceHealthStatus } from "../../../domain/ingestion";
-import { calculateSourceHealth } from "../../ingestion/source-health";
+import { calculateSourceHealth, lastRunIsPartialExpression } from "../../ingestion/source-health";
 import type { AtomFeedRepository } from "../../modules/atom-feed";
 import type { PublicDailyBriefRepository } from "../../modules/public-daily-briefs";
 import {
@@ -45,6 +46,8 @@ const METHODOLOGY_STATEMENT_COUNT = 2;
 const TOP_CHANGE_LIMIT = 3;
 const THESIS_STATEMENT_COUNT = 5;
 const PUBLIC_INDICATOR_LIMIT = 8;
+/** 论点详情页每个指标最多展示的观测点数（NOAA 全历史约 300 行，500 留有裕量）。 */
+const MAX_OBSERVATIONS_PER_INDICATOR = 500;
 const CATEGORY_STATEMENT_COUNT = 3;
 const CATEGORY_CHANGE_LIMIT = 8;
 const CHANGES_STATEMENT_COUNT = 2;
@@ -238,7 +241,8 @@ export class D1PublicReadModelRepository implements PublicReadModelRepository {
         ).bind(TOP_CHANGE_LIMIT),
         this.database.prepare(
           `SELECT source.id, source.last_success_at, source.late_after_minutes,
-                  source.stale_after_minutes, source.consecutive_failures, source.last_error_code
+                  source.stale_after_minutes, source.consecutive_failures, source.last_error_code,
+                  ${lastRunIsPartialExpression("source")} AS last_run_is_partial
              FROM sources source
             WHERE source.enabled = 1
             ORDER BY source.id`,
@@ -419,7 +423,8 @@ export class D1PublicReadModelRepository implements PublicReadModelRepository {
         changesStatement(this.database, cursor, query),
         this.database.prepare(
           `SELECT source.id, source.last_success_at, source.late_after_minutes,
-                  source.stale_after_minutes, source.consecutive_failures, source.last_error_code
+                  source.stale_after_minutes, source.consecutive_failures, source.last_error_code,
+                  ${lastRunIsPartialExpression("source")} AS last_run_is_partial
              FROM sources source
             WHERE source.enabled = 1
             ORDER BY source.id`,
@@ -638,7 +643,8 @@ function categoryChangesStatement(database: D1Database, category: PublicMarketCa
 function categoryEvidenceSourcesStatement(database: D1Database, category: PublicMarketCategory): D1PreparedStatement {
   return database.prepare(
     `SELECT DISTINCT source.id, source.last_success_at, source.late_after_minutes,
-            source.stale_after_minutes, source.consecutive_failures, source.last_error_code
+            source.stale_after_minutes, source.consecutive_failures, source.last_error_code,
+            ${lastRunIsPartialExpression("source")} AS last_run_is_partial
        FROM theses thesis
        JOIN thesis_publications publication ON publication.thesis_id = thesis.id
        JOIN thesis_versions version
@@ -677,6 +683,14 @@ function feedChangesStatement(database: D1Database): D1PreparedStatement {
 
 export function publicChangesQueryForPlan(query: PublicChangesQuery = EMPTY_PUBLIC_CHANGES_QUERY): string {
   return changesQuery(null, query).sql.replace("LIMIT ?", `LIMIT ${PUBLIC_CHANGES_PAGE_SIZE + 1}`);
+}
+
+/** 查询计划回归引用该固定查询串（Atom feed 的变更投影，importance >= 4 过滤）。 */
+export function feedChangesQueryForPlan(): string {
+  return changesQuery(null, EMPTY_PUBLIC_CHANGES_QUERY, MAJOR_CHANGE_IMPORTANCE).sql.replace(
+    "LIMIT ?",
+    `LIMIT ${FEED_CHANGE_LIMIT}`,
+  );
 }
 
 /**
@@ -756,10 +770,12 @@ function changesQuery(
   };
 }
 
-function dataHealthQuery(): string {
+/** 查询计划回归引用该固定查询串（7 天成功率子查询的 source_runs 索引访问）。 */
+export function dataHealthQuery(): string {
   return `SELECT source.id, source.name, source.organization, source.homepage_url,
                  source.cadence_minutes, source.last_success_at, source.late_after_minutes,
                  source.stale_after_minutes, source.consecutive_failures, source.last_error_code,
+                 ${lastRunIsPartialExpression("source")} AS last_run_is_partial,
                  (
                    SELECT MAX(observation.published_at)
                      FROM indicators indicator
@@ -850,9 +866,19 @@ function currentEvidenceStatement(database: D1Database, slug: string): D1Prepare
   ).bind(slug);
 }
 
-function currentIndicatorStatement(database: D1Database, slug: string): D1PreparedStatement {
-  return database.prepare(
-    `WITH selected_indicators AS (
+/**
+ * 论点详情页的指标序列投影。
+ *
+ * 无界风险：observations 按 (indicator_id, observed_at, revision) 随时间与修订线性增长，
+ * 本查询曾把选中指标的全部历史观测一次性物化。recent_observations CTE 用
+ * ROW_NUMBER() 把每个指标截断到最新 MAX_OBSERVATIONS_PER_INDICATOR 行——
+ * 每指标排名按 (observed_at DESC, revision DESC)，外层恢复
+ * (indicator.id, observed_at, revision) 升序，decodeIndicators 的行序与输出列
+ * （exactRecord 严格校验）保持不变；每指标 ≤500 行时展示内容与旧查询一致。
+ *
+ * 查询计划回归（cloudflare-read-models-query-plan.test.mjs）引用该固定查询串。
+ */
+export const CURRENT_THESIS_INDICATOR_SERIES_QUERY = `WITH selected_indicators AS (
        SELECT DISTINCT indicator.id
          FROM theses thesis
          JOIN thesis_publications publication
@@ -870,6 +896,19 @@ function currentIndicatorStatement(database: D1Database, slug: string): D1Prepar
         WHERE thesis.slug = ? AND thesis.active = 1
         ORDER BY indicator.id
         LIMIT ${PUBLIC_INDICATOR_LIMIT}
+     ),
+     recent_observations AS (
+       SELECT observation.indicator_id, observation.observed_at,
+              observation.value_num, observation.value_text, observation.unit,
+              observation.quality, observation.revision, observation.citation_url,
+              observation.published_at, observation.fetched_at,
+              ROW_NUMBER() OVER (
+                PARTITION BY observation.indicator_id
+                ORDER BY observation.observed_at DESC, observation.revision DESC
+              ) AS recency
+         FROM observations observation
+        WHERE observation.indicator_id IN (SELECT id FROM selected_indicators)
+          AND observation.quality <> 'invalid'
      )
      SELECT indicator.id, indicator.name, observation.observed_at, observation.value_num,
             observation.value_text, observation.unit, observation.quality, observation.revision,
@@ -877,11 +916,14 @@ function currentIndicatorStatement(database: D1Database, slug: string): D1Prepar
             observation.citation_url, observation.published_at, observation.fetched_at
        FROM selected_indicators selected
        JOIN indicators indicator ON indicator.id = selected.id AND indicator.public = 1
-       JOIN observations observation
-         ON observation.indicator_id = indicator.id AND observation.quality <> 'invalid'
+       JOIN recent_observations observation
+         ON observation.indicator_id = indicator.id
+        AND observation.recency <= ${MAX_OBSERVATIONS_PER_INDICATOR}
        JOIN sources source ON source.id = indicator.source_id
-      ORDER BY indicator.id, observation.observed_at, observation.revision`,
-  ).bind(slug);
+      ORDER BY indicator.id, observation.observed_at, observation.revision`;
+
+function currentIndicatorStatement(database: D1Database, slug: string): D1PreparedStatement {
+  return database.prepare(CURRENT_THESIS_INDICATOR_SERIES_QUERY).bind(slug);
 }
 
 function publishedVersionsStatement(database: D1Database, slug: string): D1PreparedStatement {
@@ -904,7 +946,8 @@ function publishedVersionsStatement(database: D1Database, slug: string): D1Prepa
 function currentEvidenceSourcesStatement(database: D1Database, slug: string): D1PreparedStatement {
   return database.prepare(
     `SELECT DISTINCT source.id, source.last_success_at, source.late_after_minutes,
-            source.stale_after_minutes, source.consecutive_failures, source.last_error_code
+            source.stale_after_minutes, source.consecutive_failures, source.last_error_code,
+            ${lastRunIsPartialExpression("source")} AS last_run_is_partial
        FROM theses thesis
        JOIN thesis_publications publication ON publication.thesis_id = thesis.id
        JOIN thesis_versions version
@@ -1307,6 +1350,7 @@ function decodeSourceHealth(row: Record<string, unknown>, generatedAt: string): 
   const item = exactRecord(row, [
     "id", "name", "organization", "homepage_url", "cadence_minutes", "last_success_at",
     "late_after_minutes", "stale_after_minutes", "consecutive_failures", "last_error_code",
+    "last_run_is_partial",
     "last_published_at", "seven_day_success_rate", "affected_indicators_json", "affected_theses_json",
   ]);
   const sourceId = nonEmptyString(item.id);
@@ -1321,6 +1365,7 @@ function decodeSourceHealth(row: Record<string, unknown>, generatedAt: string): 
     staleAfterMinutes: integer(item.stale_after_minutes, 0),
     consecutiveFailures: integer(item.consecutive_failures, 0),
     lastErrorCode: errorCode,
+    lastRunIsPartial: item.last_run_is_partial === 1,
   }).status;
   return {
     sourceId,
@@ -1375,11 +1420,12 @@ function summarizeHealth(rowsInput: readonly Record<string, unknown>[], generate
   readonly counts: OverviewPageModel["sourceHealth"];
   readonly freshness: PageFreshness;
 } {
-  const counts = { healthy: 0, delayed: 0, stale: 0, broken: 0 };
+  const counts = { healthy: 0, delayed: 0, degraded: 0, stale: 0, broken: 0 };
   const ids = new Set<string>();
   for (const row of rowsInput) {
     const item = exactRecord(row, [
-      "id", "last_success_at", "late_after_minutes", "stale_after_minutes", "consecutive_failures", "last_error_code",
+      "id", "last_success_at", "late_after_minutes", "stale_after_minutes", "consecutive_failures",
+      "last_error_code", "last_run_is_partial",
     ]);
     const sourceId = nonEmptyString(item.id);
     if (ids.has(sourceId)) throw new ReadModelStorageError();
@@ -1395,9 +1441,12 @@ function summarizeHealth(rowsInput: readonly Record<string, unknown>[], generate
       staleAfterMinutes: integer(item.stale_after_minutes, 0),
       consecutiveFailures: integer(item.consecutive_failures, 0),
       lastErrorCode: errorCode,
+      lastRunIsPartial: item.last_run_is_partial === 1,
     }).status;
     counts[status] += 1;
   }
+  // degraded 仍意味着数据在到达（last_success_at 是新的），页面级两态新鲜度保持 current；
+  // 「降级」的可见性由 per-source 状态与 data-health 页承担。
   return {
     counts,
     freshness: counts.stale > 0 || counts.broken > 0 ? "stale" : "current",
@@ -1510,10 +1559,4 @@ function assertChangesCursor(cursor: ChangesCursor): void {
 
 function encodeChangesCursor(change: PublicChangeModel): string {
   return JSON.stringify({ detectedAt: change.detectedAt, id: change.id });
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

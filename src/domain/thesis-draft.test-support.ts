@@ -65,7 +65,15 @@ export function approvedDraftSeed(): ThesisSeed {
       label: "support present",
       reviewStatus: "approved",
       active: true,
-      predicate: { kind: "selector_present", selectorIds: ["weather-support"], minimumMatches: 1 },
+      // D1 过渡守卫（2026-09-26 签字）要求至少一条 numeric_compare 规则参与方向判定，
+      // 否则 direction 输出 unavailable、草稿无法构建；测试种子改用数值谓词命中方向。
+      predicate: {
+        kind: "numeric_compare",
+        selectorId: "weather-support",
+        operator: "gt",
+        threshold: 0,
+        unit: "test-unit",
+      },
     }],
     refuteRules: [{
       id: "refute-high",
@@ -132,6 +140,9 @@ export function approvedDraftSeed(): ThesisSeed {
       sourceTierScores: { A: 100, B: 75, C: 50 },
       missingRequiredLayerCap: null,
       coverageGapCap: null,
+      forecastOnlyCap: null,
+      requiredLayerStaleCap: null,
+      unexplainedConflictCap: null,
     },
     materialChangeThresholds: {
       reviewStatus: "approved",

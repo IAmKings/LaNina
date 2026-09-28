@@ -8,14 +8,16 @@ const DEFAULT_CLIENT_DIRECTORY = fileURLToPath(new URL("../../dist/client/", imp
 
 export async function assertInitialClientJavaScriptBudget(options = {}) {
   const budget = await initialClientJavaScriptBudget(options);
+  assertBudgetWithinLimit(budget);
+  return budget;
+}
 
+export function assertBudgetWithinLimit(budget) {
   if (budget.bytes > budget.limitBytes) {
     throw new Error(
       `初始客户端 JavaScript 为 ${formatKiB(budget.bytes)}，超过 ${formatKiB(budget.limitBytes)} 预算；将图表等非首屏代码改为动态导入。`,
     );
   }
-
-  return budget;
 }
 
 export async function initialClientJavaScriptBudget({
@@ -48,6 +50,24 @@ export async function initialClientJavaScriptBudget({
 
 export function formatKiB(bytes) {
   return `${(bytes / 1024).toFixed(2)} KiB`;
+}
+
+export function formatBudgetReport(budget) {
+  const remainingBytes = budget.limitBytes - budget.bytes;
+  return [
+    `[bundle-budget] 初始客户端 JavaScript 预算（入口：${budget.entryFiles.join(", ")}）`,
+    `[bundle-budget]   当前：${formatKiB(budget.bytes)}（${budget.bytes} 字节）`,
+    `[bundle-budget]   上限：${formatKiB(budget.limitBytes)}（${budget.limitBytes} 字节）`,
+    `[bundle-budget]   余量：${formatKiB(remainingBytes)}（${remainingBytes} 字节）`,
+    `[bundle-budget]   占用：${formatBudgetUsage(budget.bytes, budget.limitBytes)}`,
+  ].join("\n");
+}
+
+function formatBudgetUsage(bytes, limitBytes) {
+  if (limitBytes === 0) {
+    return bytes > 0 ? "∞" : "0.00%";
+  }
+  return `${((bytes / limitBytes) * 100).toFixed(2)}%`;
 }
 
 function clientEntryFiles(manifestText) {

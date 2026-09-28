@@ -369,6 +369,7 @@ function factResults(options: {
       stale_after_minutes: 10080,
       consecutive_failures: 0,
       last_error_code: null,
+      last_run_is_partial: 0,
       ambiguous_retry_rewrites: options.ambiguousRetryRewrites ?? 0,
     }]),
     queryResult(options.previousRows ?? []),

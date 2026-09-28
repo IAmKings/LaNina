@@ -59,7 +59,12 @@ export interface SourceAdapter {
 }
 
 export type PersistedRunStatus = "success" | "unchanged" | "partial" | "failed";
-export type SourceHealthStatus = "healthy" | "delayed" | "stale" | "broken";
+/**
+ * degraded（D4:B，2026-09-26）：partial 采集的独立健康态——数据确实在到达
+ * （last_success_at 被刷新），但最近一次完结采集覆盖不足/部分成功。介于 healthy 与
+ * stale 之间，与「真没数据」的 delayed/stale 区分。
+ */
+export type SourceHealthStatus = "healthy" | "delayed" | "degraded" | "stale" | "broken";
 export type DispatchKind = "retry" | "scheduled";
 export type DispatchGroup = "quarter_hourly" | "hourly";
 
@@ -116,6 +121,21 @@ export interface PersistFailedRunInput {
 
 export interface IngestionRepository {
   findRun(sourceId: string, scheduledAt: string): Promise<PersistedSourceRun | null>;
+  /**
+   * 首采租约：以一条原子 INSERT 在外部抓取前占用 (source_id, scheduled_at) 槽位，
+   * 依赖 UNIQUE 约束使并发/重放的第二个调用返回 false（视为他人已领取）。占位行
+   * 以 'failed' 状态 + 租约令牌落库（status CHECK 不允许自定义状态），其后完成走
+   * 既有 guarded 更新路径；领取成功到完成之间其它调用被令牌挡住，worker 崩溃时
+   * 由 retry_claim_expires_at 过期后的重试路径接管（自愈）。
+   */
+  claimScheduledRun(
+    sourceId: string,
+    scheduledAt: string,
+    runId: string,
+    claimToken: string,
+    claimedAt: string,
+    claimExpiresAt: string,
+  ): Promise<boolean>;
   claimRetryAttempt(
     sourceId: string,
     scheduledAt: string,

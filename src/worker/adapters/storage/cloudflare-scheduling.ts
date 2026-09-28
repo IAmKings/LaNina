@@ -7,7 +7,7 @@ import type {
   SourceScheduleRepository,
 } from "../../../domain/ingestion";
 import { SOURCE_ERROR_CODES, SourceCollectionError } from "../../../domain/ingestion";
-import { calculateSourceHealth } from "../../ingestion/source-health";
+import { calculateSourceHealth, lastRunIsPartialExpression } from "../../ingestion/source-health";
 import { parseCanonicalUtc } from "../../ingestion/time";
 
 interface DispatchRow {
@@ -27,6 +27,7 @@ interface HealthRow {
   stale_after_minutes: number;
   consecutive_failures: number;
   last_error_code: string | null;
+  last_run_is_partial: number;
 }
 
 export class D1SourceSchedulingRepository
@@ -101,10 +102,12 @@ export class D1SourceSchedulingRepository
     try {
       const row = await this.database
         .prepare(
-          `SELECT id AS source_id, last_success_at, late_after_minutes, stale_after_minutes,
-                  consecutive_failures, last_error_code
+          `SELECT sources.id AS source_id, sources.last_success_at,
+                  sources.late_after_minutes, sources.stale_after_minutes,
+                  sources.consecutive_failures, sources.last_error_code,
+                  ${lastRunIsPartialExpression("sources", false)} AS last_run_is_partial
              FROM sources
-            WHERE id = ?`,
+            WHERE sources.id = ?`,
         )
         .bind(sourceId)
         .first<HealthRow>();
@@ -117,6 +120,7 @@ export class D1SourceSchedulingRepository
         staleAfterMinutes: row.stale_after_minutes,
         consecutiveFailures: row.consecutive_failures,
         lastErrorCode: sourceErrorCode(row.last_error_code),
+        lastRunIsPartial: row.last_run_is_partial === 1,
       });
     } catch (error) {
       if (error instanceof SourceCollectionError) throw error;

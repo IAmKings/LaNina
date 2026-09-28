@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`evaluateStageGates > allows only one upward step unless a named manual confirmation explicitly approves the skip 1`] = `
+exports[`evaluateStageGates > allows only one upward step and blocks cross-level eligibility without confirmation 1`] = `
 {
   "checks": [
     {
@@ -149,7 +149,6 @@ exports[`evaluateStageGates > allows only one upward step unless a named manual 
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "market_confirmed",
-  "manualConfirmationApplied": false,
   "previousStage": "watch",
   "reasons": [
     {
@@ -188,197 +187,6 @@ exports[`evaluateStageGates > allows only one upward step unless a named manual 
   "stage": "weather_realized",
   "thesisId": "TEST-THESIS-01",
   "transition": "blocked",
-}
-`;
-
-exports[`evaluateStageGates > allows only one upward step unless a named manual confirmation explicitly approves the skip 2`] = `
-{
-  "checks": [
-    {
-      "blockingCoverageGapIds": [],
-      "matchedEvidenceIds": [
-        "evidence-weather",
-      ],
-      "matchedRuleIds": [
-        "gate-weather",
-      ],
-      "missingLayers": [],
-      "presentLayers": [
-        "weather",
-      ],
-      "reasons": [],
-      "rejectedRuleIds": [],
-      "requiredLayers": [
-        "weather",
-      ],
-      "staleLayers": [],
-      "status": "passed",
-      "targetStage": "weather_realized",
-    },
-    {
-      "blockingCoverageGapIds": [],
-      "matchedEvidenceIds": [
-        "evidence-physical",
-      ],
-      "matchedRuleIds": [
-        "gate-physical",
-      ],
-      "missingLayers": [],
-      "presentLayers": [
-        "weather",
-        "physical",
-      ],
-      "reasons": [],
-      "rejectedRuleIds": [],
-      "requiredLayers": [
-        "weather",
-        "physical",
-      ],
-      "staleLayers": [],
-      "status": "passed",
-      "targetStage": "physical_pressure",
-    },
-    {
-      "blockingCoverageGapIds": [],
-      "matchedEvidenceIds": [
-        "evidence-balance",
-      ],
-      "matchedRuleIds": [
-        "gate-balance",
-      ],
-      "missingLayers": [],
-      "presentLayers": [
-        "weather",
-        "physical",
-        "balance",
-      ],
-      "reasons": [],
-      "rejectedRuleIds": [],
-      "requiredLayers": [
-        "weather",
-        "physical",
-        "balance",
-      ],
-      "staleLayers": [],
-      "status": "passed",
-      "targetStage": "balance_tightening",
-    },
-    {
-      "blockingCoverageGapIds": [],
-      "matchedEvidenceIds": [
-        "evidence-market",
-      ],
-      "matchedRuleIds": [
-        "gate-market",
-      ],
-      "missingLayers": [],
-      "presentLayers": [
-        "weather",
-        "physical",
-        "balance",
-        "market",
-      ],
-      "reasons": [],
-      "rejectedRuleIds": [],
-      "requiredLayers": [
-        "weather",
-        "physical",
-        "balance",
-        "market",
-      ],
-      "staleLayers": [],
-      "status": "passed",
-      "targetStage": "market_confirmed",
-    },
-    {
-      "blockingCoverageGapIds": [],
-      "matchedEvidenceIds": [],
-      "matchedRuleIds": [],
-      "missingLayers": [],
-      "presentLayers": [
-        "weather",
-        "physical",
-      ],
-      "reasons": [
-        {
-          "code": "RELIEF_BASIS_REQUIRED",
-          "coverageGapId": null,
-          "layer": null,
-          "reason": "缓解需要已审核的 relief/invalidation 非市场依据，不能只凭价格反转",
-          "ruleId": null,
-          "targetStage": "easing",
-        },
-        {
-          "code": "RULE_NOT_MATCHED",
-          "coverageGapId": null,
-          "layer": null,
-          "reason": "规则 invalidate 未匹配",
-          "ruleId": "invalidate",
-          "targetStage": "easing",
-        },
-        {
-          "code": "RULE_NOT_MATCHED",
-          "coverageGapId": null,
-          "layer": null,
-          "reason": "规则 relief 未匹配",
-          "ruleId": "relief",
-          "targetStage": "easing",
-        },
-      ],
-      "rejectedRuleIds": [
-        "invalidate",
-        "relief",
-      ],
-      "requiredLayers": [
-        "weather",
-        "physical",
-      ],
-      "staleLayers": [],
-      "status": "blocked",
-      "targetStage": "easing",
-    },
-  ],
-  "cutoff": "2026-09-08T12:00:00.000Z",
-  "highestEligibleStage": "market_confirmed",
-  "manualConfirmationApplied": true,
-  "previousStage": "watch",
-  "reasons": [
-    {
-      "code": "MANUAL_FORWARD_SKIP_CONFIRMED",
-      "coverageGapId": null,
-      "layer": null,
-      "reason": "由 reviewer@example.com 明确确认跨级：逐层证据已人工复核",
-      "ruleId": null,
-      "targetStage": "market_confirmed",
-    },
-    {
-      "code": "RELIEF_BASIS_REQUIRED",
-      "coverageGapId": null,
-      "layer": null,
-      "reason": "缓解需要已审核的 relief/invalidation 非市场依据，不能只凭价格反转",
-      "ruleId": null,
-      "targetStage": "easing",
-    },
-    {
-      "code": "RULE_NOT_MATCHED",
-      "coverageGapId": null,
-      "layer": null,
-      "reason": "规则 invalidate 未匹配",
-      "ruleId": "invalidate",
-      "targetStage": "easing",
-    },
-    {
-      "code": "RULE_NOT_MATCHED",
-      "coverageGapId": null,
-      "layer": null,
-      "reason": "规则 relief 未匹配",
-      "ruleId": "relief",
-      "targetStage": "easing",
-    },
-  ],
-  "stage": "market_confirmed",
-  "thesisId": "TEST-THESIS-01",
-  "transition": "manual_forward_skip",
 }
 `;
 
@@ -614,7 +422,6 @@ exports[`evaluateStageGates > distinguishes stale required evidence and permits 
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "weather_realized",
-  "manualConfirmationApplied": false,
   "previousStage": "market_confirmed",
   "reasons": [
     {
@@ -736,7 +543,7 @@ exports[`evaluateStageGates > distinguishes stale required evidence and permits 
 }
 `;
 
-exports[`evaluateStageGates > does not let manual confirmation bypass missing layers, rules or stage coverage gaps 1`] = `
+exports[`evaluateStageGates > does not let cross-level eligibility bypass missing layers, rules or stage coverage gaps 1`] = `
 {
   "checks": [
     {
@@ -992,7 +799,6 @@ exports[`evaluateStageGates > does not let manual confirmation bypass missing la
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "weather_realized",
-  "manualConfirmationApplied": false,
   "previousStage": "watch",
   "reasons": [
     {
@@ -1287,7 +1093,6 @@ exports[`evaluateStageGates > evaluates the complete deterministic object for ba
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "balance_tightening",
-  "manualConfirmationApplied": false,
   "previousStage": "physical_pressure",
   "reasons": [
     {
@@ -1486,7 +1291,6 @@ exports[`evaluateStageGates > evaluates the complete deterministic object for ma
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "market_confirmed",
-  "manualConfirmationApplied": false,
   "previousStage": "balance_tightening",
   "reasons": [
     {
@@ -1709,7 +1513,6 @@ exports[`evaluateStageGates > evaluates the complete deterministic object for ph
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "physical_pressure",
-  "manualConfirmationApplied": false,
   "previousStage": "weather_realized",
   "reasons": [
     {
@@ -2056,7 +1859,6 @@ exports[`evaluateStageGates > evaluates the complete deterministic object for wa
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "watch",
-  "manualConfirmationApplied": false,
   "previousStage": "watch",
   "reasons": [
     {
@@ -2448,7 +2250,6 @@ exports[`evaluateStageGates > evaluates the complete deterministic object for we
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "weather_realized",
-  "manualConfirmationApplied": false,
   "previousStage": "watch",
   "reasons": [
     {
@@ -2867,7 +2668,6 @@ exports[`evaluateStageGates > keeps forecast-only evidence at watch and blocks a
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "watch",
-  "manualConfirmationApplied": false,
   "previousStage": "watch",
   "reasons": [
     {
@@ -3329,7 +3129,6 @@ exports[`evaluateStageGates > keeps forecast-only evidence at watch and blocks a
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "watch",
-  "manualConfirmationApplied": false,
   "previousStage": "watch",
   "reasons": [
     {
@@ -3650,7 +3449,6 @@ exports[`evaluateStageGates > requires an approved relief or invalidation basis 
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "easing",
-  "manualConfirmationApplied": false,
   "previousStage": "market_confirmed",
   "reasons": [
     {
@@ -3968,7 +3766,6 @@ exports[`evaluateStageGates > requires an approved relief or invalidation basis 
   ],
   "cutoff": "2026-09-08T12:00:00.000Z",
   "highestEligibleStage": "watch",
-  "manualConfirmationApplied": false,
   "previousStage": "market_confirmed",
   "reasons": [
     {

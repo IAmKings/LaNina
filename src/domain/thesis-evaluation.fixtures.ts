@@ -5,6 +5,8 @@ import type {
   RejectedEvidence,
 } from "./evaluation";
 import { INITIAL_THESIS_SEEDS } from "./initial-thesis-seeds";
+import { compareText } from "./internal/compare";
+import { deepFreeze } from "./internal/freeze";
 import type { IndicatorSelector, ThesisSeed } from "./thesis-seeds";
 
 export const GOLDEN_SCENARIOS = ["support", "refute", "invalidation", "coverage_gap"] as const;
@@ -167,14 +169,4 @@ function compareRejected(left: RejectedEvidence, right: RejectedEvidence): numbe
     || compareText(left.indicatorId, right.indicatorId)
     || compareText(left.evidenceId ?? "", right.evidenceId ?? "")
     || compareText(left.code, right.code);
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

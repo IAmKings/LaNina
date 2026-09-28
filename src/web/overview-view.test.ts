@@ -8,7 +8,6 @@ import { OverviewContent } from "./App";
 import {
   RISK_MAP_STAGES,
   directionLabel,
-  formatShanghaiTime,
   freshnessLabel,
   hasPublicOverview,
   healthLabel,
@@ -22,11 +21,6 @@ describe("overview view helpers", () => {
     expect(directionLabel("bullish")).toBe("偏多");
     expect(stageLabel("physical_pressure")).toBe("实物承压");
     expect(healthLabel("delayed")).toBe("延迟");
-  });
-
-  it("formats public timestamps for Shanghai users", () => {
-    expect(formatShanghaiTime("2026-09-09T23:00:00.000Z")).toContain("2026/09/10");
-    expect(formatShanghaiTime(null)).toBe("暂无");
   });
 
   it("keeps an empty publication distinct from a stale published overview", () => {
@@ -151,7 +145,7 @@ function publishedOverview(): OverviewPageModel {
     ],
     theses,
     coverageGaps: [],
-    sourceHealth: { healthy: 5, delayed: 1, stale: 0, broken: 0 },
+    sourceHealth: { healthy: 5, delayed: 1, degraded: 0, stale: 0, broken: 0 },
     freshness: "current",
   };
 }

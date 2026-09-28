@@ -289,16 +289,15 @@ describe("selectEvidence", () => {
     expect(Object.isFrozen(left.selectedEvidence[0])).toBe(true);
   });
 
-  it("orders duplicate identities deterministically even when their evidence IDs also collide", () => {
+  it("throws a locatable INVALID_SELECTION error when inputs repeat an evidenceId", () => {
     const first = evidence({ evidenceId: "duplicate", sourceId: "z-source", value: 2 });
     const second = evidence({ evidenceId: "duplicate", sourceId: "a-source", value: 1 });
 
-    const left = selectEvidence(approvedSeed(0), CUTOFF, [first, second]);
-    const right = selectEvidence(approvedSeed(0), CUTOFF, [second, first]);
-
-    expect(left).toEqual(right);
-    expect(left.inputs.map(({ sourceId }) => sourceId)).toEqual(["a-source", "z-source"]);
-    expect(left.rejectedEvidence.filter(({ code }) => code === "AMBIGUOUS_REVISION")).toHaveLength(2);
+    // 重复 evidenceId 使「最新 revision」与解释归属无法定义：在选择前直接拒绝并指明根因。
+    expect(() => selectEvidence(approvedSeed(0), CUTOFF, [first, second])).toThrow(
+      /INVALID_SELECTION: 输入证据 evidenceId "duplicate" 重复/,
+    );
+    expect(() => selectEvidence(approvedSeed(0), CUTOFF, [second, first])).toThrow(/去重后重试/);
   });
 
   it("anchors freshness to source publication instead of a future forecast target period", () => {

@@ -64,28 +64,78 @@ export async function runSourceIngestion(
   }
 
   const createId = dependencies.createId ?? (() => crypto.randomUUID());
-  const runId = existing?.id ?? createId();
-  const retryCount = existing === null ? 0 : existing.retryCount + 1;
-  const expectedRetryCount = existing?.retryCount ?? null;
-  const retryClaimToken = existing === null ? null : createId();
-  if (existing !== null && retryClaimToken !== null) {
-    const claimed = await dependencies.repository.claimRetryAttempt(
+
+  if (existing === null) {
+    // 首采租约（M5）：外部抓取前先原子占用 (source_id, scheduled_at) 槽位，cron 的
+    // at-least-once 重放/并发重叠只会让第二个调用在 UNIQUE 冲突上拿到 false 并跳过，
+    // 不再重复外采。领取方以占位行 + 令牌持有槽位，完成后走既有 guarded 完成路径。
+    const runId = createId();
+    const leaseToken = createId();
+    const claimed = await dependencies.repository.claimScheduledRun(
       request.sourceId,
       request.scheduledAt,
-      existing.retryCount,
-      retryClaimToken,
+      runId,
+      leaseToken,
       attemptStartedAt,
       addMinutes(attemptStartedAt, RETRY_CLAIM_MINUTES),
     );
     if (!claimed) {
-      const current = await dependencies.repository.findRun(request.sourceId, request.scheduledAt);
-      return {
-        collectionStatus: "already_processed",
-        run: current ?? existing,
-      };
+      const raced = await dependencies.repository.findRun(request.sourceId, request.scheduledAt);
+      if (raced === null) {
+        throw new SourceCollectionError("DATABASE", "无法确认采集运行租约状态", { retryable: true });
+      }
+      return { collectionStatus: "already_processed", run: raced };
     }
+    return collectAndPersist(request, dependencies, {
+      runId,
+      retryCount: 0,
+      expectedRetryCount: 0,
+      retryClaimToken: leaseToken,
+      attemptStartedAt,
+    });
   }
 
+  // failed 重试路径：既有 CAS claim 逻辑保持不变。
+  const retryClaimToken = createId();
+  const claimed = await dependencies.repository.claimRetryAttempt(
+    request.sourceId,
+    request.scheduledAt,
+    existing.retryCount,
+    retryClaimToken,
+    attemptStartedAt,
+    addMinutes(attemptStartedAt, RETRY_CLAIM_MINUTES),
+  );
+  if (!claimed) {
+    const current = await dependencies.repository.findRun(request.sourceId, request.scheduledAt);
+    return {
+      collectionStatus: "already_processed",
+      run: current ?? existing,
+    };
+  }
+  return collectAndPersist(request, dependencies, {
+    runId: existing.id,
+    retryCount: existing.retryCount + 1,
+    expectedRetryCount: existing.retryCount,
+    retryClaimToken,
+    attemptStartedAt,
+  });
+}
+
+interface CollectLease {
+  readonly runId: string;
+  readonly retryCount: number;
+  readonly expectedRetryCount: number;
+  readonly retryClaimToken: string;
+  readonly attemptStartedAt: string;
+}
+
+async function collectAndPersist(
+  request: RunSourceRequest,
+  dependencies: RunSourceDependencies,
+  lease: CollectLease,
+): Promise<RunSourceOutcome> {
+  const { runId, retryCount, expectedRetryCount, retryClaimToken, attemptStartedAt } = lease;
+  const now = dependencies.now ?? (() => new Date().toISOString());
   try {
     const cursor = await dependencies.repository.findSourceCursor(request.sourceId);
     const fetchedAt = now();

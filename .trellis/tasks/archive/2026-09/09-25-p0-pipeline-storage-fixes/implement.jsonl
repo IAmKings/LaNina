@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "backend 入口：Pre-Development Checklist 与各 guideline 索引"}
+{"file": ".trellis/spec/backend/source-ingestion.md", "reason": "采集适配器/dispatch 的既有约定（超时封装要遵守）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "D1 迁移与查询规范（0011 迁移、窗口函数改写要遵守）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误分类/retryable 语义（超时归类 NETWORK 需对齐）"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "结构化日志规范（公共路由 catch 日志）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端入口（404 页与路由归一化）"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 NotFoundPage 组件需遵循的组件约定"}

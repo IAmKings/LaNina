@@ -302,6 +302,66 @@ describe("0005 daily brief freeze migration", () => {
   });
 });
 
+describe("乐观锁 latest attempt 排序（rowid）", () => {
+  it("findCurrentFreezeKey 按插入序（rowid）返回最新 attempt，不受操作方 created_at 影响", async () => {
+    const database = readyDatabase();
+    insertAttemptPair(database);
+    const repository = new D1DailyBriefRepository(new SqliteD1(database).asDatabase());
+
+    // 低 rowid 的 attempt 携带未来 created_at、高 rowid 的携带过去 created_at：
+    // 旧排序（created_at DESC）会返回 forged-future，rowid 排序必须返回 real-past。
+    await expect(repository.findCurrentFreezeKey("2026-09-10")).resolves.toBe("real-past");
+  });
+
+  it("freezeAndPublish 的乐观锁守卫按插入序比对最新 attempt，发布不被伪造 created_at 劫持", async () => {
+    const database = readyDatabase();
+    insertAttemptPair(database);
+    const sqlite = new SqliteD1(database);
+    const repository = new D1DailyBriefRepository(sqlite.asDatabase());
+    let id = 0;
+    const dailyBrief = new DailyBriefModule(repository, () => `sqlite-daily-${++id}`);
+
+    const command = dailyCommand("2026-09-09T22:30:00.000Z", 1);
+    command.expectedFreezeKey = "real-past";
+
+    // 旧排序会把 forged-future（created_at 2099）当最新 attempt 而误报 VERSION_CONFLICT；
+    // rowid 排序下最新 attempt 是 real-past，与 expectedFreezeKey 一致 → 正常发布。
+    await expect(dailyBrief.freezeAndPublish(command)).resolves.toMatchObject({
+      briefDate: "2026-09-10",
+      status: "published",
+    });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+});
+
+function insertAttemptPair(database) {
+  const insert = database.prepare(
+    `INSERT INTO daily_brief_attempts (
+       id, brief_date, freeze_key, outcome, data_cutoff, headline, summary,
+       top_changes_json, target_snapshot_json, methodology_snapshot_json,
+       rule_snapshot_json, source_health_snapshot_json, actor, reason, created_at
+     ) VALUES (?, '2026-09-10', ?, 'delayed', '2026-09-09T22:30:00.000Z', '探针', '探针',
+       '[]', ?, ?, ?, '[]', 'probe', '乐观锁排序探针', ?)`,
+  );
+  const insertGates = database.prepare(
+    `INSERT INTO daily_brief_gate_results (attempt_id, gate_code, status, explanation, reasons_json)
+     VALUES (?, ?, 'passed', '探针', '[]')`,
+  );
+  const targets = JSON.stringify([{
+    thesisId: "ENSO-CORE-01", thesisVersionId: "current-1-1", version: 1, sortOrder: 0,
+  }]);
+  const methodologies = JSON.stringify([{ thesisId: "ENSO-CORE-01", methodologyVersion: "evaluation-v1" }]);
+  const rules = JSON.stringify([{ thesisId: "ENSO-CORE-01", ruleVersion: "rules-v1" }]);
+  // 先插入低 rowid、未来 created_at；再插入高 rowid、过去 created_at。
+  insert.run("attempt-forged", "forged-future", targets, methodologies, rules, "2099-01-01T00:00:00.000Z");
+  insert.run("attempt-real", "real-past", targets, methodologies, rules, "2026-09-09T00:00:00.000Z");
+  for (const attemptId of ["attempt-forged", "attempt-real"]) {
+    for (const gateCode of ["PRIMARY_SOURCE_HEALTH", "FREEZE_COMPLETENESS", "CITATION_COMPLETENESS", "HIGH_RISK_REVIEW"]) {
+      insertGates.run(attemptId, gateCode);
+    }
+  }
+}
+
 function legacyDatabase(linkCount = 6) {
   const database = new DatabaseSync(":memory:");
   databases.push(database);
@@ -353,6 +413,7 @@ function readyDatabase(skipThesisIds = []) {
     "0005_daily_brief_freeze.sql",
     "0009_daily_brief_exemptions.sql",
     "0010_daily_brief_exemptions_trigger.sql",
+    "0012_daily_brief_link_exemption_disjoint.sql",
   ]) applyMigration(database, migration);
   database.exec(readFile("seeds/0001_theses.sql"));
   database.exec(

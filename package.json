@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "vite",
@@ -13,9 +13,10 @@
     "check:bundle": "node scripts/check-initial-client-js-budget.mjs",
     "benchmark:public-api": "node scripts/benchmark-public-api.mjs",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "CLOUDFLARE_ENV=staging npm run build && npm run check:bundle && wrangler deploy",
+    "deploy:production": "CLOUDFLARE_ENV=production npm run build && npm run check:bundle && node scripts/assert-production-config.mjs && wrangler deploy",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:contract": "vitest run src/worker/adapters/sources",
     "test:integration": "vitest run src/worker/index.test.ts src/worker/adapters/storage/daily-brief-migration.test.mjs src/worker/adapters/storage/cloudflare-read-models-query-plan.test.mjs",
@@ -39,6 +40,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@cloudflare/vite-plugin": "1.54.4",
     "@cloudflare/workers-types": "5.20260907.1",
     "@eslint/js": "10.0.1",

@@ -7,7 +7,7 @@ import {
 import type { EvaluationEvidenceInput, SourceTier } from "../../../domain/evaluation";
 import { SOURCE_ERROR_CODES, type ObservationQuality, type SourceErrorCode } from "../../../domain/ingestion";
 import type { ThesisSeed } from "../../../domain/thesis-seeds";
-import { calculateSourceHealth } from "../../ingestion/source-health";
+import { calculateSourceHealth, lastRunIsPartialExpression } from "../../ingestion/source-health";
 import {
   DailyScheduleError,
   type DailyEvaluationInput,
@@ -41,6 +41,7 @@ interface SourceStateRow {
   readonly stale_after_minutes: number;
   readonly consecutive_failures: number;
   readonly last_error_code: string | null;
+  readonly last_run_is_partial: number;
   readonly ambiguous_retry_rewrites: number;
 }
 
@@ -50,6 +51,12 @@ interface PreviousVersionRow {
   readonly based_on_cutoff: string;
   readonly created_at: string;
 }
+
+/**
+ * 评估输入的行数结构护栏。远超当前规模；命中说明 selector 集合或观测历史膨胀，
+ * 宁可让当日判定失败也不拖垮 cron（fail-closed，见 evaluationInputsQuery 注释）。
+ */
+const MAX_EVALUATION_INPUT_ROWS = 50000;
 
 export class D1DailyScheduleRepository
   implements DailyEvaluationRepository, DailyPublicationCandidateRepository
@@ -67,22 +74,8 @@ export class D1DailyScheduleRepository
     const thesisIds = seeds.map((seed) => seed.id);
     try {
       const results = await this.database.batch<Record<string, unknown>>([
-        this.database.prepare(
-          `SELECT observation.id, observation.indicator_id, observation.observed_at,
-                  observation.value_num, observation.value_text, observation.unit,
-                  observation.published_at, observation.fetched_at, observation.revision,
-                  observation.supersedes_id, observation.quality, observation.source_run_id,
-                  observation.citation_url, source.id AS source_id
-             FROM observations observation
-             JOIN indicators indicator ON indicator.id = observation.indicator_id
-             JOIN sources source ON source.id = indicator.source_id
-             JOIN source_runs run
-               ON run.id = observation.source_run_id AND run.source_id = source.id
-            WHERE observation.indicator_id IN (${placeholders(indicatorIds)})
-              AND observation.fetched_at <= ?
-            ORDER BY observation.indicator_id, observation.observed_at, observation.revision,
-                     observation.id`,
-        ).bind(...indicatorIds, cutoff),
+        this.database.prepare(evaluationInputsQuery(indicatorIds.length))
+          .bind(...indicatorIds, cutoff),
         this.database.prepare(
           `SELECT version.thesis_id, version.stage, version.based_on_cutoff, version.created_at
              FROM thesis_versions version
@@ -105,7 +98,7 @@ export class D1DailyScheduleRepository
                      WHERE successful.source_id = source.id
                        AND successful.finished_at IS NOT NULL
                        AND successful.finished_at <= ?
-                       AND successful.status IN ('success', 'unchanged')
+                       AND successful.status IN ('success', 'unchanged', 'partial')
                      ORDER BY successful.finished_at DESC, successful.started_at DESC,
                               successful.id DESC
                      LIMIT 1
@@ -139,6 +132,7 @@ export class D1DailyScheduleRepository
                      ORDER BY latest.finished_at DESC, latest.started_at DESC, latest.id DESC
                      LIMIT 1
                   ) AS last_error_code,
+                  ${lastRunIsPartialExpression("source", true)} AS last_run_is_partial,
                   (
                     SELECT COUNT(*)
                       FROM source_runs rewritten
@@ -154,10 +148,13 @@ export class D1DailyScheduleRepository
                WHERE indicator.id IN (${placeholders(indicatorIds)})
             )
             ORDER BY source.id`,
-        ).bind(cutoff, cutoff, cutoff, cutoff, cutoff, cutoff, ...indicatorIds),
+        ).bind(cutoff, cutoff, cutoff, cutoff, cutoff, cutoff, cutoff, cutoff, ...indicatorIds),
       ]);
       if (!Array.isArray(results) || results.length !== 3) throw databaseError();
-      const observationRows = queryRows(results[0]).map(decodeObservationRow);
+      const rawObservationRows = queryRows(results[0]);
+      // LIMIT 恰好返回上限行数时无法区分「恰好 50000」与「已被截断」，按 fail-closed 处理。
+      if (rawObservationRows.length >= MAX_EVALUATION_INPUT_ROWS) throw databaseError();
+      const observationRows = rawObservationRows.map(decodeObservationRow);
       const previousRows = queryRows(results[1]).map(decodePreviousVersionRow);
       const sourceRows = queryRows(results[2]).map(decodeSourceStateRow);
       const previousByThesis = new Map(previousRows.map((row) => [row.thesis_id, row] as const));
@@ -183,6 +180,7 @@ export class D1DailyScheduleRepository
             staleAfterMinutes: source.stale_after_minutes,
             consecutiveFailures: source.consecutive_failures,
             lastErrorCode: sourceErrorCode(source.last_error_code),
+            lastRunIsPartial: source.last_run_is_partial === 1,
           });
           return [{
             evidenceId: row.id,
@@ -244,6 +242,48 @@ export class D1DailyScheduleRepository
   }
 }
 
+/**
+ * 评估输入的观测查询（固定查询串供 cloudflare-read-models-query-plan.test.mjs 回归）。
+ *
+ * - revision 去重下推到 SQL：同一 (indicator_id, observed_at) 只保留 MAX(revision) 一行，
+ *   历史修订不再整批返回。indicator_id IN 条件必须留在去重子查询内部，
+ *   GROUP BY 才能走 idx_observations_indicator_observed 的前缀，避免全表分组。
+ * - 语义红线：不新增 observed_at 下界——NOAA（1950 起）、World Bank 年度序列等
+ *   多年历史观测是合法评估输入，加窗口会改变评估结果。
+ * - LIMIT MAX_EVALUATION_INPUT_ROWS 为结构护栏；命中上限行数时调用方 fail-closed。
+ */
+function evaluationInputsQuery(selectorCount: number): string {
+  return `SELECT observation.id, observation.indicator_id, observation.observed_at,
+          observation.value_num, observation.value_text, observation.unit,
+          observation.published_at, observation.fetched_at, observation.revision,
+          observation.supersedes_id, observation.quality, observation.source_run_id,
+          observation.citation_url, source.id AS source_id
+     FROM observations observation
+     JOIN (
+           SELECT latest_rows.indicator_id, latest_rows.observed_at,
+                  MAX(latest_rows.revision) AS max_revision
+             FROM observations latest_rows
+            WHERE latest_rows.indicator_id IN (${placeholders(Array.from({ length: selectorCount }, () => "?"))})
+            GROUP BY latest_rows.indicator_id, latest_rows.observed_at
+       ) latest
+       ON latest.indicator_id = observation.indicator_id
+      AND latest.observed_at = observation.observed_at
+      AND observation.revision = latest.max_revision
+     JOIN indicators indicator ON indicator.id = observation.indicator_id
+     JOIN sources source ON source.id = indicator.source_id
+     JOIN source_runs run
+       ON run.id = observation.source_run_id AND run.source_id = source.id
+    WHERE observation.fetched_at <= ?
+    ORDER BY observation.indicator_id, observation.observed_at, observation.revision,
+             observation.id
+    LIMIT ${MAX_EVALUATION_INPUT_ROWS}`;
+}
+
+/** 查询计划回归入口：与 evaluationInputsQuery 返回完全一致的 SQL 文本。 */
+export function evaluationInputsQueryForPlan(selectorCount: number): string {
+  return evaluationInputsQuery(selectorCount);
+}
+
 function decodeObservationRow(value: Record<string, unknown>): ObservationRow {
   const row = exactRecord(value, [
     "id", "indicator_id", "observed_at", "value_num", "value_text", "unit", "published_at",
@@ -271,7 +311,7 @@ function decodeObservationRow(value: Record<string, unknown>): ObservationRow {
 function decodeSourceStateRow(value: Record<string, unknown>): SourceStateRow {
   const row = exactRecord(value, [
     "source_id", "source_tier", "last_success_at", "late_after_minutes", "stale_after_minutes",
-    "consecutive_failures", "last_error_code", "ambiguous_retry_rewrites",
+    "consecutive_failures", "last_error_code", "last_run_is_partial", "ambiguous_retry_rewrites",
   ]);
   return {
     source_id: nonEmptyString(row.source_id),
@@ -281,6 +321,7 @@ function decodeSourceStateRow(value: Record<string, unknown>): SourceStateRow {
     stale_after_minutes: nonNegativeInteger(row.stale_after_minutes),
     consecutive_failures: nonNegativeInteger(row.consecutive_failures),
     last_error_code: nullableString(row.last_error_code),
+    last_run_is_partial: nonNegativeInteger(row.last_run_is_partial),
     ambiguous_retry_rewrites: nonNegativeInteger(row.ambiguous_retry_rewrites),
   };
 }

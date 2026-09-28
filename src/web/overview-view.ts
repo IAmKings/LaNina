@@ -29,6 +29,7 @@ export function healthLabel(status: SourceHealthStatus): string {
   const labels: Record<SourceHealthStatus, string> = {
     healthy: "正常",
     delayed: "延迟",
+    degraded: "降级",
     stale: "过期",
     broken: "故障",
   };
@@ -90,22 +91,6 @@ export function riskMapEmptyStageLabel(): string {
 /** The card freshness is a two-state public signal; it is not a source-health status. */
 export function freshnessLabel(freshness: ThesisCardModel["freshness"]): string {
   return freshness === "stale" ? "延迟" : "正常";
-}
-
-export function formatShanghaiTime(value: string | null): string {
-  if (value === null) {
-    return "暂无";
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-    minute: "2-digit",
-    month: "2-digit",
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-  }).format(new Date(value));
 }
 
 export function hasPublicOverview(model: OverviewPageModel): boolean {

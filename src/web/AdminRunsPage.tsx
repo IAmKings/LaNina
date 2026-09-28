@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 
 import type { ApiEnvelope } from "../domain/contracts";
 import type { AdminRunsPageModel, PageLoadState } from "../domain/page-models";
-import { formatShanghaiTime } from "./overview-view";
+import { isAbort } from "./is-abort";
 import { adminRunStatusLabel, hasAdminRuns, safeErrorCodeLabel } from "./admin-runs-view";
+import { adminRunsEndpoint } from "./cursor-allowlist";
+import { formatShanghaiTime } from "./shanghai-time";
 
 type AdminRunsState = PageLoadState<AdminRunsPageModel>;
 
 export function AdminRunsPage() {
-  const cursor = new URLSearchParams(window.location.search).get("cursor");
-  const endpoint = cursor === null ? "/api/admin/runs" : `/api/admin/runs?cursor=${encodeURIComponent(cursor)}`;
+  const endpoint = adminRunsEndpoint(window.location.search);
   const [state, setState] = useState<AdminRunsState>({ status: "loading" });
 
   useEffect(() => {
@@ -22,7 +23,7 @@ export function AdminRunsPage() {
         setState({ status: "ready", data: body.data });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbort(error, controller.signal)) return;
         setState({ status: "error", message: "后台运行记录暂时无法加载。" });
       });
     return () => controller.abort();

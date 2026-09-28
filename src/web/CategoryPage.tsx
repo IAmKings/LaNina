@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 
 import type { ApiEnvelope } from "../domain/contracts";
 import type { CategoryPageModel, PublicMarketCategory } from "../domain/page-models";
-import { directionLabel, formatShanghaiTime, stageLabel } from "./overview-view";
+import { isAbort } from "./is-abort";
+import { directionLabel, stageLabel } from "./overview-view";
+import { formatShanghaiTime } from "./shanghai-time";
 import { categoryEyebrow, categoryRequestPath, hasPublishedCategory } from "./category-view";
 
 type CategoryState =
@@ -33,7 +35,7 @@ export function CategoryPage({ category }: { category: PublicMarketCategory }) {
         setState({ data: body.data, status: "ready" });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (isAbort(error, controller.signal)) {
           return;
         }
         setState({ status: "error" });

@@ -1,5 +1,6 @@
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "./contracts";
 import type { ThesisDirection } from "./contracts";
+import { canonicalJson } from "./canonical-json";
 import type {
   ConfidenceCap,
   ConfidenceComponentExplanations,
@@ -16,6 +17,8 @@ import type {
 } from "./evaluation";
 import { evaluateRulePredicate } from "./rule-predicate";
 import { evaluateStageGates, validateEvidenceSelection } from "./stage-gate";
+import { compareSelectedLatestFirst, compareText, sortedLayers } from "./internal/compare";
+import { deepFreeze } from "./internal/freeze";
 import type { RuleDescriptor, ThesisSeed } from "./thesis-seeds";
 
 const CONFIDENCE_WEIGHTS = {
@@ -35,7 +38,7 @@ export function evaluateDirectionAndConfidence(
   const currentEvidence = invalidSelection === null
     ? latestSelectedBySelector(selection.selectedEvidence)
     : [];
-  const requiredLayers = requiredLayersForStage(seed, stageResult);
+  const requiredLayers = requiredLayersForSeed(seed);
   const explanationSelection = invalidSelection === null
     ? selection
     : { ...selection, selectedEvidence: [], rejectedEvidence: [] };
@@ -126,14 +129,28 @@ function evaluateDirection(
   }
 
   const distinctDirections = [...new Set(matchedDirections)].sort(compareDirection);
-  const direction = unresolvedMatchedRule
+  // D1 过渡守卫（2026-09-26 决策单 A）：selector_present 谓词只证明“证据在场”，不证明强弱。
+  // 当命中方向的规则全部是 selector_present、没有任何 numeric_compare 规则参与时，方向不判定：
+  // 输出 unavailable 并保留 seed 的有范围默认方向。D3 numeric_compare 规则上线后本守卫失去
+  // 触发条件，可届时移除。守卫只影响 direction 字段，不改变 confidence 的计算。
+  const predicateKindByRuleId = new Map(
+    rules.map(({ rule }) => [rule.id, rule.predicate.kind] as const),
+  );
+  const selectorPresentOnlyHit = ruleHits.length > 0 && ruleHits.every(
+    ({ ruleId }) => predicateKindByRuleId.get(ruleId) === "selector_present",
+  );
+  const direction = selectorPresentOnlyHit
+    ? seed.defaultDirection
+    : unresolvedMatchedRule
     ? seed.defaultDirection
     : distinctDirections.length === 1
     ? distinctDirections[0] ?? seed.defaultDirection
     : distinctDirections.length > 1
       ? "mixed"
       : seed.defaultDirection;
-  if (distinctDirections.length > 1) {
+  if (selectorPresentOnlyHit) {
+    reasons.push("命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定");
+  } else if (distinctDirections.length > 1) {
     reasons.push(`命中多个不同方向 ${distinctDirections.join("/")}，按固定冲突规则解析为 mixed`);
   } else if (unresolvedMatchedRule) {
     reasons.push("至少一条已命中规则没有审核后的方向映射，方向结果关闭并保留有范围默认方向");
@@ -145,6 +162,7 @@ function evaluateDirection(
     status: boundaryReasons.length === 0
       && policyAvailable
       && !unresolvedMatchedRule
+      && !selectorPresentOnlyHit
       && distinctDirections.length > 0
       ? "available"
       : "unavailable",
@@ -254,22 +272,27 @@ function confidenceCaps(
   explanations: ConfidenceComponentExplanations,
 ): readonly ConfidenceCap[] {
   const caps: ConfidenceCap[] = [];
+  // D5 一页纸口径固定 49/59/69；已审核 policy 未声明对应 cap（null）时按同一口径回退，
+  // 避免旧策略数据在字段补齐前出现置信度上限漂移。
+  const forecastOnlyCap = seed.confidencePolicy.forecastOnlyCap ?? 49;
+  const requiredLayerStaleCap = seed.confidencePolicy.requiredLayerStaleCap ?? 59;
+  const unexplainedConflictCap = seed.confidencePolicy.unexplainedConflictCap ?? 69;
   const layers = new Set(currentEvidence.map(({ layer }) => layer));
   const forecastOnly = layers.has("forecast")
     && !["weather", "physical", "balance", "market"].some((layer) => layers.has(layer as EvidenceLayer));
   if (forecastOnly) {
     caps.push({
       code: "FORECAST_ONLY",
-      maximum: 49,
-      reason: "只有气候预测、没有区域天气或后续传导观测，按 PRD 将置信度上限设为 49",
+      maximum: forecastOnlyCap,
+      reason: `只有气候预测、没有区域天气或后续传导观测，按 PRD 将置信度上限设为 ${forecastOnlyCap}`,
     });
   }
   const staleRequiredLayers = whollyStaleRequiredLayers(seed, selection, currentEvidence);
   if (staleRequiredLayers.length > 0) {
     caps.push({
       code: "REQUIRED_LAYER_STALE",
-      maximum: 59,
-      reason: `必需证据层全部过期：${staleRequiredLayers.join("、")}，按 PRD 将上限设为 59`,
+      maximum: requiredLayerStaleCap,
+      reason: `必需证据层全部过期：${staleRequiredLayers.join("、")}，按 PRD 将上限设为 ${requiredLayerStaleCap}`,
     });
   }
   const supportEvidence = currentEvidence.filter(
@@ -282,8 +305,8 @@ function confidenceCaps(
   if (unexplainedSourceConflict) {
     caps.push({
       code: "UNEXPLAINED_CONFLICT",
-      maximum: 69,
-      reason: "当前同时存在支持与反向证据（包括同一来源内的矛盾），且本版策略未定义可审计的冲突解释，按 PRD 将上限设为 69",
+      maximum: unexplainedConflictCap,
+      reason: `当前同时存在支持与反向证据（包括同一来源内的矛盾），且本版策略未定义可审计的冲突解释，按 PRD 将上限设为 ${unexplainedConflictCap}`,
     });
   }
   if (
@@ -401,10 +424,11 @@ function buildExplanations(
   };
 }
 
-function requiredLayersForStage(seed: ThesisSeed, stageResult: StageGateResult): readonly EvidenceLayer[] {
-  if (stageResult.stage === "watch") return sortedLayers(seed.requiredEvidenceLayers);
-  const gate = seed.stageGates.find(({ targetStage }) => targetStage === stageResult.stage);
-  return sortedLayers(gate?.requiredLayers ?? seed.requiredEvidenceLayers);
+function requiredLayersForSeed(seed: ThesisSeed): readonly EvidenceLayer[] {
+  // D3（2026-09-26 决策单 A）：coverage/freshness 的分母恒为种子全集（论点整体证据完备度），
+  // 不随最终阶段 gate 的层集缩放——同一证据跨阶段分数可比，且 MISSING_REQUIRED_LAYER cap
+  // 的 missingLayers 与分母同源（buildExplanations 使用同一 requiredLayers）。
+  return sortedLayers(seed.requiredEvidenceLayers);
 }
 
 function validateEvaluationBoundary(
@@ -440,9 +464,6 @@ function validateStageResult(
   ) {
     return "阶段结果与 seed/证据选择的身份、cutoff 或状态不一致";
   }
-  if (stageResult.manualConfirmationApplied) {
-    return "阶段结果只携带可伪造的 manualConfirmationApplied 布尔值，缺少可校验的具名人工确认契约";
-  }
   const expected = evaluateStageGates(seed, selection, {
     previousStage: stageResult.previousStage,
   });
@@ -450,7 +471,6 @@ function validateStageResult(
     expected.highestEligibleStage !== stageResult.highestEligibleStage
     || expected.stage !== stageResult.stage
     || expected.transition !== stageResult.transition
-    || expected.manualConfirmationApplied !== stageResult.manualConfirmationApplied
     || !sameJson(expected.checks, stageResult.checks)
     || !sameJson(expected.reasons, stageResult.reasons)
   ) {
@@ -460,7 +480,14 @@ function validateStageResult(
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  try {
+    // 键序无关的 canonical 比较（对照 material-change/thesis-draft 的同一口径）：
+    // JSON.stringify 会把等价对象因键插入顺序不同误判为不一致。
+    return canonicalJson(left) === canonicalJson(right);
+  } catch {
+    // 无法 canonical 化的负载（循环/非有限数值/非普通对象）一律视为不一致，保持 fail-closed。
+    return false;
+  }
 }
 
 function latestSelectedBySelector(evidence: readonly SelectedEvidence[]): readonly SelectedEvidence[] {
@@ -469,13 +496,6 @@ function latestSelectedBySelector(evidence: readonly SelectedEvidence[]): readon
     if (!latest.has(item.selectorId)) latest.set(item.selectorId, item);
   }
   return [...latest.values()].sort((left, right) => compareText(left.selectorId, right.selectorId));
-}
-
-function compareSelectedLatestFirst(left: SelectedEvidence, right: SelectedEvidence): number {
-  return compareText(left.selectorId, right.selectorId)
-    || compareText(right.observedAt, left.observedAt)
-    || right.revision - left.revision
-    || compareText(left.evidenceId, right.evidenceId);
 }
 
 function categorizedRules(seed: ThesisSeed): Array<{
@@ -524,21 +544,6 @@ function roundHalfUp(value: number): number {
   return Math.floor(value + 0.5);
 }
 
-function sortedLayers(layers: readonly EvidenceLayer[]): readonly EvidenceLayer[] {
-  const order = ["forecast", "weather", "physical", "balance", "market", "control"] as const;
-  return [...new Set(layers)].sort((left, right) => order.indexOf(left) - order.indexOf(right));
-}
-
 function compareDirection(left: ThesisDirection, right: ThesisDirection): number {
   return THESIS_DIRECTIONS.indexOf(left) - THESIS_DIRECTIONS.indexOf(right);
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

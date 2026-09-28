@@ -1,11 +1,13 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import type {
   AdminDailyPageModel,
   AdminDailyReviewObligationModel,
   PageLoadState,
 } from "../domain/page-models";
+import { isAbort } from "./is-abort";
 import {
+  adminDailyControlsBusy,
   blockerLabel,
   canSubmitDaily,
   dailyCutoffLabel,
@@ -28,6 +30,7 @@ import {
   shanghaiToday,
   thesisChangeReviewRequestBody,
   thesisVersionPublishRequestBody,
+  type AdminDailyOperationStatus,
   type DailyGateFailure,
   type DailyPublishDraft,
 } from "./admin-daily-view";
@@ -35,7 +38,7 @@ import {
 type AdminDailyState = PageLoadState<AdminDailyPageModel>;
 
 interface SubmitState {
-  readonly status: "editing" | "submitting" | "error" | "success";
+  readonly status: AdminDailyOperationStatus;
   readonly message: string | null;
   /** Structured gate diagnostics returned with GATES_FAILED. */
   readonly gates?: readonly DailyGateFailure[];
@@ -51,6 +54,8 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   const [batchReason, setBatchReason] = useState("");
   const [review, setReview] = useState<SubmitState>({ status: "editing", message: null });
   const [reviewReason, setReviewReason] = useState("");
+  /** Aborted on unmount so an in-flight batch loop cannot fetch (or write state) into a dead page. */
+  const batchAbortRef = useRef<AbortController | null>(null);
   /**
    * The concurrency token (`currentFreezeKey`) must be current before a publish may be submitted,
    * otherwise a fast retry submits the stale token and fails again with VERSION_CONFLICT. The
@@ -71,12 +76,14 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
         setLoadedToken(reloadToken);
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbort(error, controller.signal)) return;
         setState({ status: "error", message: "每日判定预检暂时无法加载。" });
       });
 
     return () => controller.abort();
   }, [briefDate, reloadToken]);
+
+  useEffect(() => () => batchAbortRef.current?.abort(), []);
 
   if (state.status === "loading") {
     return <AdminDailyNotice heading="正在取得每日判定预检信息…" briefDate={briefDate} />;
@@ -94,15 +101,21 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   // A successful submit stays busy until the refreshed preflight projection replaces the form.
   // `preflightLoading` blocks a fast retry from reusing a stale concurrency token.
   const preflightLoading = state.status === "ready" && loadedToken !== reloadToken;
-  const busy = submit.status === "submitting" || submit.status === "success" || preflightLoading;
+  // The three operations (publish form, one-click target publishing, review recording) are mutually
+  // exclusive: while any of them runs, every other control on the page stays disabled.
+  const busy = adminDailyControlsBusy(submit.status, batch.status, review.status, preflightLoading);
 
   /**
    * 发布该截止时间仍为 draft 的论点版本（服务端逐条重新校验 publisher 权限、版本新鲜度与
    * 生产发布签字）。这是纯操作提速：brief 的编辑内容与冻结仍在原有表单里完成。
+   * 循环挂在组件级 AbortController 上：卸载时中断在途请求；单项失败即中断剩余循环，
+   * 并如实展示已完成与未完成的部分。
    */
   async function publishAllTargets() {
     const reason = batchReason.trim();
-    if (draftTargets.length === 0 || reason.length === 0) return;
+    if (busy || draftTargets.length === 0 || reason.length === 0) return;
+    const controller = new AbortController();
+    batchAbortRef.current = controller;
     setBatch({ status: "submitting", message: `正在发布 ${draftTargets.length} 条论点版本…` });
     const done: string[] = [];
     const failed: string[] = [];
@@ -111,9 +124,10 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
         const response = await fetch(
           `/api/admin/thesis-versions/${encodeURIComponent(target.thesisVersionId)}/publish`,
           {
-            method: "POST",
-            headers: { "content-type": "application/json" },
             body: JSON.stringify(thesisVersionPublishRequestBody(target, reason)),
+            headers: { "content-type": "application/json" },
+            method: "POST",
+            signal: controller.signal,
           },
         );
         if (response.ok) {
@@ -121,25 +135,33 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
           continue;
         }
         failed.push(`${target.thesisId}（${await safeErrorCode(response) ?? response.status}）`);
-      } catch {
+        break;
+      } catch (error) {
+        if (isAbort(error, controller.signal)) break;
         failed.push(`${target.thesisId}（网络）`);
+        break;
       }
     }
+    batchAbortRef.current = null;
+    if (controller.signal.aborted) return;
     setReloadToken((token) => token + 1);
     setBatch(
       failed.length === 0
         ? { status: "success", message: `已发布 ${done.length} 条论点版本，可继续发布每日判定。` }
-        : { status: "error", message: `已发布 ${done.length} 条；失败：${failed.join("、")}` },
+        : batchPartialMessage("已发布", done.length, failed, draftTargets.length),
     );
   }
 
   /**
    * 记录高风险转场审核（方向变化 / 阶段跨级 / 置信度 ≥20）。审核精确绑定上一期已发布判定冻结的
    * 版本，服务端会再次解析并校验，浏览器只是把预检给出的版本身份原样回传。
+   * 中断与卸载语义与 publishAllTargets 相同。
    */
   async function recordPendingReviews() {
     const reason = reviewReason.trim();
-    if (pendingReviews.length === 0 || reason.length === 0) return;
+    if (busy || pendingReviews.length === 0 || reason.length === 0) return;
+    const controller = new AbortController();
+    batchAbortRef.current = controller;
     setReview({ status: "submitting", message: `正在记录 ${pendingReviews.length} 条高风险转场审核…` });
     const done: string[] = [];
     const failed: string[] = [];
@@ -148,9 +170,10 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
         const response = await fetch(
           `/api/admin/thesis-versions/${encodeURIComponent(obligation.afterVersionId)}/review`,
           {
-            method: "POST",
-            headers: { "content-type": "application/json" },
             body: JSON.stringify(thesisChangeReviewRequestBody(obligation, reason)),
+            headers: { "content-type": "application/json" },
+            method: "POST",
+            signal: controller.signal,
           },
         );
         if (response.ok) {
@@ -158,21 +181,26 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
           continue;
         }
         failed.push(`${obligation.thesisId}（${await safeErrorCode(response) ?? response.status}）`);
-      } catch {
+        break;
+      } catch (error) {
+        if (isAbort(error, controller.signal)) break;
         failed.push(`${obligation.thesisId}（网络）`);
+        break;
       }
     }
+    batchAbortRef.current = null;
+    if (controller.signal.aborted) return;
     setReloadToken((token) => token + 1);
     setReview(
       failed.length === 0
         ? { status: "success", message: `已记录 ${done.length} 条转场审核，可继续发布每日判定。` }
-        : { status: "error", message: `已记录 ${done.length} 条；失败：${failed.join("、")}` },
+        : batchPartialMessage("已记录", done.length, failed, pendingReviews.length),
     );
   }
 
   async function submitPublish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canSubmitDaily(draft, model)) return;
+    if (busy || !canSubmitDaily(draft, model)) return;
 
     setSubmit({ status: "submitting", message: null });
     try {
@@ -279,7 +307,7 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
           <div className="admin-lifecycle-actions">
             <label htmlFor="admin-daily-batch-reason">批量发布原因（写入每条论点版本审计）</label>
             <input
-              disabled={batch.status === "submitting"}
+              disabled={busy}
               id="admin-daily-batch-reason"
               maxLength={500}
               onChange={(event) => setBatchReason(event.target.value)}
@@ -289,7 +317,7 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
             <button
               type="button"
               onClick={publishAllTargets}
-              disabled={batch.status === "submitting" || draftTargets.length === 0 || batchReason.trim().length === 0}
+              disabled={busy || draftTargets.length === 0 || batchReason.trim().length === 0}
             >
               {draftTargets.length === 0
                 ? "没有待发布的 draft 论点版本"
@@ -316,7 +344,7 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
             </ul>
             <label htmlFor="admin-daily-review-reason">审核原因（写入每条转场审核）</label>
             <input
-              disabled={review.status === "submitting"}
+              disabled={busy}
               id="admin-daily-review-reason"
               maxLength={500}
               onChange={(event) => setReviewReason(event.target.value)}
@@ -325,7 +353,7 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
             />
             <button
               type="button"
-              disabled={review.status === "submitting" || reviewReason.trim().length === 0}
+              disabled={busy || reviewReason.trim().length === 0}
               onClick={recordPendingReviews}
             >
               {review.status === "submitting" ? "正在记录…" : `记录并批准 ${pendingReviews.length} 条转场审核`}
@@ -496,6 +524,24 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
       )}
     </div>
   );
+}
+
+/**
+ * Failure report for an interrupted batch loop: the completed part stays visible and the
+ * not-attempted remainder is stated explicitly instead of being silently dropped.
+ */
+function batchPartialMessage(
+  verb: string,
+  doneCount: number,
+  failed: readonly string[],
+  total: number,
+): { readonly status: "error"; readonly message: string } {
+  const remaining = total - doneCount - failed.length;
+  const remainder = remaining > 0 ? `；剩余 ${remaining} 条未执行` : "";
+  return {
+    status: "error",
+    message: `${verb} ${doneCount} 条；失败：${failed.join("、")}${remainder}`,
+  };
 }
 
 function AdminDailyNotice({

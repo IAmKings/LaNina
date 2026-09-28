@@ -1,4 +1,61 @@
+import type { FetchDependency } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
+
+/** 外部抓取的默认时限：来源无响应时不得占住 dispatch 名额。 */
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+export interface FetchTimeoutOptions {
+  readonly timeoutMs?: number;
+}
+
+/**
+ * 外部抓取统一走此封装：到时限后把等待归类为可重试的 NETWORK 错误（与
+ * `errorForResponse` 的 408/5xx 语义一致），由适配器既有的 catch 收口。
+ *
+ * 双保险设计：
+ * - `AbortSignal.timeout(timeoutMs)` 负责真正中断底层连接（真实网络路径）；
+ * - 追加一个 `setTimeout` 竞速，保证即使底层实现忽略 abort 信号（例如测试替身、
+ *   或实现未及时响应），调用方也在时限内得到确定性的失败。
+ */
+export async function fetchWithinTimeout(
+  fetch: FetchDependency,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: FetchTimeoutOptions = {},
+): Promise<Response> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const callerSignal = init?.signal;
+  const signal = callerSignal === undefined || callerSignal === null
+    ? timeoutSignal
+    : AbortSignal.any([callerSignal, timeoutSignal]);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new SourceCollectionError("NETWORK", "来源请求超时", { retryable: true }));
+    }, timeoutMs);
+  });
+
+  try {
+    const request = fetch(input, { ...init, signal });
+    // 竞速先到 deadline 时，底层后续的 rejection 不得变成 unhandled。
+    void request.catch(() => {});
+    return await Promise.race([request, deadline]);
+  } catch (error) {
+    if (error instanceof SourceCollectionError) throw error;
+    if (timeoutSignal.aborted || isTimeoutRejection(error)) {
+      throw new SourceCollectionError("NETWORK", "来源请求超时", { retryable: true, cause: error });
+    }
+    throw error;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function isTimeoutRejection(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+}
 
 export async function readBodyWithinLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
   const declaredLength = response.headers.get("content-length");

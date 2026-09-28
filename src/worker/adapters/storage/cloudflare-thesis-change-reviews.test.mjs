@@ -95,6 +95,29 @@ describe("D1ThesisChangeReviewRepository", () => {
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 
+  it("returns frozen review records from both the write and read paths", async () => {
+    const database = readyDatabase();
+    await publish(database, "2026-09-09T22:30:00.000Z", 1);
+    insertVersionSet(database, 2, "2026-09-10T22:30:00.000Z");
+    const repository = new D1ThesisChangeReviewRepository(new SqliteD1(database).asDatabase());
+    const review = new ThesisChangeReviewModule(repository);
+
+    const inserted = await review.record({
+      thesisId: "ENSO-CORE-01",
+      afterVersionId: "current-2-1",
+      beforeVersionId: "current-1-1",
+      decision: "approved",
+      reason: "方向变化已复核",
+      actor: "publisher@example.com",
+      occurredAt: "2026-09-10T23:00:00.000Z",
+    });
+    const found = await repository.find("current-2-1");
+
+    expect(Object.isFrozen(inserted)).toBe(true);
+    expect(found).not.toBeNull();
+    expect(Object.isFrozen(found)).toBe(true);
+  });
+
   it("keeps the identity trigger as the last line of defence", () => {
     const database = readyDatabase();
     applyMigration007(database);

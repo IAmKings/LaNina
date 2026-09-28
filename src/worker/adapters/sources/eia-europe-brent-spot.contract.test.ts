@@ -42,7 +42,7 @@ defineAdapterContract({
           ["sort[0][column]", "period"],
           ["sort[0][direction]", "asc"],
           ["offset", "0"],
-          ["length", "40"],
+          ["length", "62"],
         ]);
         const headers = new Headers(init?.headers);
         expect(headers.get("Accept")).toBe("application/json");
@@ -221,6 +221,20 @@ describe("EIA Europe Brent spot adapter behavior", () => {
     });
     const result = await adapter.collect({ ...baseContext, fetch: fixtureFetch(payload) });
     expect(result.observations.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("末行早于窗口末端 7 天时拒绝（防上游静默截断）", async () => {
+    const staleTail = fixture((payload) => {
+      // 窗口为 2026-07-16..2026-09-08；把整段数据回拨到 8 月下旬（仍升序、在窗口内），
+      // 行数与结构完全合法，唯独末行距窗口末端超过 7 天。
+      const stalePeriods = ["2026-08-19", "2026-08-20", "2026-08-21"];
+      payload.response.data.forEach((row, index) => {
+        row.period = stalePeriods[index]!;
+      });
+    });
+    await expect(
+      adapter.collect({ ...baseContext, fetch: fixtureFetch(staleTail) }),
+    ).rejects.toMatchObject({ code: "SCHEMA_DRIFT", retryable: false });
   });
 
   it("enforces the 64 KiB response limit", async () => {

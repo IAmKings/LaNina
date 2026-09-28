@@ -5,6 +5,7 @@ import type {
   SourceErrorCode,
 } from "../../domain/ingestion";
 import { SourceCollectionError } from "../../domain/ingestion";
+import { fetchWithinTimeout } from "../adapters/sources/http";
 import { parseCanonicalUtc } from "./time";
 
 export interface LiveSmokeTarget {
@@ -61,6 +62,10 @@ export async function runLiveSmoke(request: RunLiveSmokeRequest): Promise<LiveSm
   }
 
   const results: LiveSmokeSourceResult[] = [];
+  // 边界处统一包一层超时：live smoke 是手工诊断命令，任何一次外部请求都不允许无限挂起
+  //（适配器内部也有自己的超时封装，这里是最后一道护栏）。
+  const fetchWithinLimits: CollectContext["fetch"] = (input, init) =>
+    fetchWithinTimeout(request.fetch, input, init);
   for (const target of request.targets) {
     let sourceResult: LiveSmokeSourceResult;
     try {
@@ -72,7 +77,7 @@ export async function runLiveSmoke(request: RunLiveSmokeRequest): Promise<LiveSm
         previousEtag: null,
         previousLastModified: null,
         previousContentHash: null,
-        fetch: request.fetch,
+        fetch: fetchWithinLimits,
       });
       if (collected.sourceId !== target.sourceId || collected.fetchedAt !== request.fetchedAt) {
         throw new SourceCollectionError("VALIDATION", "live smoke 采集结果身份不匹配");

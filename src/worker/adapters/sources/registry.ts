@@ -1,12 +1,6 @@
 import type { SourceAdapter } from "../../../domain/ingestion";
-import {
-  JPX_OSE_ADAPTER_KEY,
-  jpxOseSettlementAdapter,
-} from "./jpx-ose-settlement";
-import {
-  NOAA_RONI_ADAPTER_KEY,
-  noaaRoniAdapter,
-} from "./noaa-roni";
+import { jpxOseSettlementAdapter } from "./jpx-ose-settlement";
+import { noaaRoniAdapter } from "./noaa-roni";
 import {
   createUnctadLsciAdapter,
   UNCTAD_ADAPTER_KEY,
@@ -15,14 +9,8 @@ import {
   createUsaCensusIntlTradeAdapter,
   USA_CENSUS_ADAPTER_KEY,
 } from "./usa-census-intltrade";
-import {
-  WORLD_BANK_ADAPTER_KEY,
-  worldBankPinkSheetAdapter,
-} from "./world-bank-pink-sheet";
-import {
-  NASA_POWER_RAINFALL_ADAPTER_KEY,
-  nasaPowerRegionalRainfallAdapter,
-} from "./nasa-power-regional-rainfall";
+import { worldBankPinkSheetAdapter } from "./world-bank-pink-sheet";
+import { nasaPowerRegionalRainfallAdapter } from "./nasa-power-regional-rainfall";
 import {
   createUsdaFasPsdAdapter,
   USDA_FAS_PSD_ADAPTER_KEY,
@@ -32,12 +20,16 @@ import {
   EIA_EUROPE_BRENT_ADAPTER_KEY,
 } from "./eia-europe-brent-spot";
 
-const keyOnlyApprovedAdapters = new Map<string, SourceAdapter>([
-  [NOAA_RONI_ADAPTER_KEY, noaaRoniAdapter],
-  [NASA_POWER_RAINFALL_ADAPTER_KEY, nasaPowerRegionalRainfallAdapter],
-  [WORLD_BANK_ADAPTER_KEY, worldBankPinkSheetAdapter],
-  [JPX_OSE_ADAPTER_KEY, jpxOseSettlementAdapter],
-]);
+/**
+ * 无凭证的已批准适配器实例。新增 key-only 适配器只需把实例加入此数组——
+ * 注册表与批准键判定都从这里推导。
+ */
+const keyOnlyApprovedAdapters: readonly SourceAdapter[] = [
+  noaaRoniAdapter,
+  nasaPowerRegionalRainfallAdapter,
+  worldBankPinkSheetAdapter,
+  jpxOseSettlementAdapter,
+];
 
 export interface SourceAdapterRegistryOptions {
   usdaFasApiKey?: string;
@@ -47,24 +39,45 @@ export interface SourceAdapterRegistryOptions {
   unctadApiKey?: string;
 }
 
+/** 凭证注入型适配器工厂：新增适配器只改这一张表（键 + 工厂各一处）。 */
+const approvedAdapterFactories: readonly {
+  key: string;
+  create(options: SourceAdapterRegistryOptions): SourceAdapter;
+}[] = [
+  {
+    key: USA_CENSUS_ADAPTER_KEY,
+    create: (options) => createUsaCensusIntlTradeAdapter(options.censusApiKey),
+  },
+  {
+    key: UNCTAD_ADAPTER_KEY,
+    create: (options) =>
+      createUnctadLsciAdapter({ clientId: options.unctadClientId, apiKey: options.unctadApiKey }),
+  },
+  {
+    key: USDA_FAS_PSD_ADAPTER_KEY,
+    create: (options) => createUsdaFasPsdAdapter(options.usdaFasApiKey),
+  },
+  {
+    key: EIA_EUROPE_BRENT_ADAPTER_KEY,
+    create: (options) => createEiaEuropeBrentSpotAdapter(options.eiaApiKey),
+  },
+];
+
+/** 凭证注入型适配器的批准键常量表：isApprovedSourceAdapterKey 的唯一判定来源之一。 */
+const FACTORY_KEYS: readonly string[] = approvedAdapterFactories.map(({ key }) => key);
+
 export function createSourceAdapterRegistry(
   options: SourceAdapterRegistryOptions = {},
 ): ReadonlyMap<string, SourceAdapter> {
   return new Map([
-    ...keyOnlyApprovedAdapters,
-    [USA_CENSUS_ADAPTER_KEY, createUsaCensusIntlTradeAdapter(options.censusApiKey)] as const,
-    [UNCTAD_ADAPTER_KEY, createUnctadLsciAdapter({ clientId: options.unctadClientId, apiKey: options.unctadApiKey })] as const,
-    [USDA_FAS_PSD_ADAPTER_KEY, createUsdaFasPsdAdapter(options.usdaFasApiKey)] as const,
-    [EIA_EUROPE_BRENT_ADAPTER_KEY, createEiaEuropeBrentSpotAdapter(options.eiaApiKey)] as const,
+    ...keyOnlyApprovedAdapters.map((adapter) => [adapter.key, adapter] as const),
+    ...approvedAdapterFactories.map(({ key, create }) => [key, create(options)] as const),
   ]);
 }
 
 export function isApprovedSourceAdapterKey(key: string): boolean {
   return (
-    key === USA_CENSUS_ADAPTER_KEY ||
-    key === UNCTAD_ADAPTER_KEY ||
-    key === USDA_FAS_PSD_ADAPTER_KEY ||
-    key === EIA_EUROPE_BRENT_ADAPTER_KEY ||
-    keyOnlyApprovedAdapters.has(key)
+    FACTORY_KEYS.includes(key) ||
+    keyOnlyApprovedAdapters.some((adapter) => adapter.key === key)
   );
 }

@@ -1,4 +1,7 @@
 import { canonicalJson, sha256Hex } from "./canonical-json";
+import { compareText } from "./internal/compare";
+import { deepFreeze } from "./internal/freeze";
+import { parseCanonicalUtc } from "./internal/time";
 import type { SourceHealthStatus } from "./ingestion";
 
 export const DAILY_BRIEF_TIME_ZONE = "Asia/Shanghai" as const;
@@ -215,7 +218,9 @@ export async function dailyBriefFreezeKey(input: {
     ...(exemptions.length === 0 ? {} : { exemptions }),
     headline: input.headline,
     summary: input.summary,
-    topChanges: input.topChanges,
+    // topChanges 参与哈希前先排序：同一组变化的不同展示顺序必须得到同一 freeze key
+    // （展示顺序由存储数组保序，这里只约束幂等键，不约束展示）。
+    topChanges: [...input.topChanges].sort(compareText),
     versions: [...input.versions].sort((left, right) => left.thesisId.localeCompare(right.thesisId)),
     sourceHealth: [...input.sourceHealth].sort((left, right) => left.sourceId.localeCompare(right.sourceId)),
   };
@@ -340,18 +345,8 @@ function compareExemptions(left: DailyBriefExemption, right: DailyBriefExemption
 }
 
 function canonicalUtc(value: unknown, field: string): Date {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+  if (typeof value !== "string" || parseCanonicalUtc(value) === null) {
     throw new Error(`${field} 必须是规范 UTC 时间`);
   }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value) {
-    throw new Error(`${field} 必须是规范 UTC 时间`);
-  }
-  return parsed;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
+  return new Date(value);
 }

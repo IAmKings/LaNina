@@ -45,7 +45,7 @@ describe("D1PublicReadModelRepository", () => {
         title: "欧线航运市场确认",
         gapDescription: expect.stringContaining("欧线运价"),
       }],
-      sourceHealth: { healthy: 1, delayed: 0, stale: 0, broken: 0 },
+      sourceHealth: { healthy: 1, delayed: 0, degraded: 0, stale: 0, broken: 0 },
       freshness: "current",
     });
     // 被豁免论点不是论点卡片：公开投影里没有方向/置信度字段，绝不编造。
@@ -65,7 +65,7 @@ describe("D1PublicReadModelRepository", () => {
       topChanges: [],
       theses: [],
       coverageGaps: [],
-      sourceHealth: { healthy: 0, delayed: 0, stale: 0, broken: 0 },
+      sourceHealth: { healthy: 0, delayed: 0, degraded: 0, stale: 0, broken: 0 },
       freshness: "current",
     });
     expect(database.statements[1]!.query).toContain("version.status = 'published'");
@@ -561,6 +561,7 @@ function sourceRow(): Record<string, unknown> {
     stale_after_minutes: 120,
     consecutive_failures: 0,
     last_error_code: null,
+    last_run_is_partial: 0,
   };
 }
 
@@ -690,6 +691,7 @@ function sourceHealthRow(): Record<string, unknown> {
     stale_after_minutes: 120,
     consecutive_failures: 0,
     last_error_code: null,
+    last_run_is_partial: 0,
     last_published_at: "2026-09-09T12:00:00.000Z",
     seven_day_success_rate: 100,
     affected_indicators_json: "[\"RONI\"]",

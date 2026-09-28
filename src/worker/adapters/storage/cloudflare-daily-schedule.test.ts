@@ -40,6 +40,43 @@ describe("D1DailyScheduleRepository", () => {
     })]);
   });
 
+  it("deduplicates revisions and bounds evaluation inputs in SQL", async () => {
+    const database = new FakeDatabase([
+      success([observationRow()]),
+      success([]),
+      success([sourceStateRow()]),
+    ]);
+    const repository = new D1DailyScheduleRepository(database as unknown as D1Database);
+
+    await repository.loadEvaluationInputs([approvedDraftSeed()], CUTOFF);
+
+    const observationQuery = database.statements[0]!.query;
+    // revision 去重下推：同一 (indicator, observed_at) 只保留 MAX(revision)
+    expect(observationQuery).toContain("MAX(latest_rows.revision) AS max_revision");
+    expect(observationQuery).toContain("observation.revision = latest.max_revision");
+    // 指标过滤留在去重子查询内，GROUP BY 才能走 idx_observations_indicator_observed 前缀
+    expect(observationQuery).toContain("WHERE latest_rows.indicator_id IN (");
+    expect(observationQuery).not.toContain("WHERE observation.indicator_id IN (");
+    // 结构护栏 + 语义红线（多年历史观测是合法评估输入，不加 observed_at 下界）
+    expect(observationQuery).toContain("LIMIT 50000");
+    expect(observationQuery).not.toMatch(/observed_at >=|observed_at >/);
+    // 绑定顺序：子查询 IN 占位符在前，cutoff 仍在最后
+    expect(database.statements[0]!.values.at(-1)).toBe(CUTOFF);
+  });
+
+  it("fails closed when evaluation inputs reach the structural row guard", async () => {
+    const database = new FakeDatabase([
+      success(Array.from({ length: 50000 }, () => observationRow())),
+      success([]),
+      success([sourceStateRow()]),
+    ]);
+
+    await expect(new D1DailyScheduleRepository(database as unknown as D1Database)
+      .loadEvaluationInputs([approvedDraftSeed()], CUTOFF)).rejects.toMatchObject({
+        code: "DATABASE",
+      });
+  });
+
   it("reconstructs source health at the cutoff instead of reading mutable source health", async () => {
     const database = new FakeDatabase([
       success([observationRow()]),
@@ -235,6 +272,7 @@ function sourceStateRow(
     stale_after_minutes: 120,
     consecutive_failures: 0,
     last_error_code: null,
+    last_run_is_partial: 0,
     ambiguous_retry_rewrites: 0,
     ...overrides,
   };

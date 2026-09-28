@@ -5,7 +5,7 @@ import type {
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
 
 export const USA_CENSUS_SOURCE_ID = "usa_census_intltrade_route_proxy";
 export const USA_CENSUS_ADAPTER_KEY = "usa-census-intltrade-v1";
@@ -112,7 +112,11 @@ async function fetchMonthlySumRow(
     url.searchParams.set("key", apiKey);
     let response: Response;
     try {
-      response = await context.fetch(url, { headers: new Headers({ Accept: "application/json" }) });
+      response = await fetchWithinTimeout(
+        context.fetch,
+        url,
+        { headers: new Headers({ Accept: "application/json" }) },
+      );
     } catch {
       throw new SourceCollectionError("NETWORK", "无法连接 Census API", { retryable: true });
     }

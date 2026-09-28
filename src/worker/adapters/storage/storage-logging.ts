@@ -19,6 +19,7 @@ const KNOWN_STORAGE_ERROR_NAMES: ReadonlySet<string> = new Set([
   "ThesisDraftError",
   "ThesisPublicationError",
   "ManualSourceRunError",
+  "DerivedIndicatorError",
 ]);
 
 export function reportStorageFailure(scope: string, error?: unknown): void {

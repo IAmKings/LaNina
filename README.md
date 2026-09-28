@@ -16,7 +16,11 @@ Cloudflare Access 保护的最小研究后台。它不是投资建议，研究�
 已发布数据时，页面会明确显示空状态，而不会用草稿或本地示例填充。
 
 公开 JSON 接口位于 `/api/v1`，成功响应使用 `data` 与 `meta`（生成时间、数据截止时间、方法论版本）封装；
-错误响应使用受控的 `error` 封装，不暴露数据库或来源内部信息。
+错误响应使用受控的 `error` 封装，不暴露数据库或来源内部信息。路径存在但 HTTP 方法不匹配时返回
+`405` 并携带 `Allow` 头（列出该路径支持的方法），无响应体；路径完全未知仍是 `404`。无查询参数的
+`GET /api/v1/overview` 与 `GET /api/v1/data-health` 额外在 Cloudflare 边缘缓存（TTL 即响应的
+`Cache-Control`，约 60 秒 + stale-while-revalidate）：命中时响应带 `X-ENSO-Cache: hit`，未命中的
+首次响应不带该头；admin、feed/sitemap/robots、healthz、带查询参数的路径与非 200 响应一律不缓存。
 
 | 接口 | 用途与约束 |
 |---|---|
@@ -52,7 +56,12 @@ curl -fsS -X POST https://<host>/api/admin/daily/2026-09-11/publish \
 至多三个 change ID、理由与并发令牌 `expectedFreezeKey`。四类门禁（主来源健康、冻结完整性、引用完整性、
 高风险审核）任一未通过都会以 `409 GATES_FAILED` 拒绝且不写入公开内容。
 
-高风险转场（方向变化、阶段跨两级、置信度变化 ≥20）需要先由 `publisher` 记录精确绑定的审核：
+高风险转场（方向变化、阶段跨两级、置信度变化 ≥20）需要先由 `publisher` 记录精确绑定的审核。
+ENSO-CORE-01 的方向自 2026-09 起由数值规则判定（RONI ≥ +0.5°C 为偏多，低于阈值方向暂不判定）；
+该规则生效后首个发布周期可能出现集中的 DIRECTION_CHANGE 审核，属预期。2026-09-27 签字回填后，
+RUBBER-TH-01 / PALM-SEA-01 / MAIZE-SA-01 的方向同样由签字数值规则判定（降水距平/期末库存去库/
+五年均值比阈值，均严格小于才判偏多）；这些论点首次越过阈值时同样会出现 DIRECTION_CHANGE 审核，
+属预期。SHIP-USEC-01 的数值规则等 ACP 来源权利预审（G2）通过后接入。
 
 ```bash
 curl -fsS -X POST https://<host>/api/admin/thesis-versions/<after-version-id>/review \
@@ -82,7 +91,11 @@ curl -fsS -X POST https://<host>/api/admin/theses/ENSO-CORE-01/evaluate \
 ## 在线访问
 
 - **staging 环境**：<https://enso.125457.xyz/>（自定义域名，绑定阶段每日自动采集评估）
-- 后台 `/admin` 由 Cloudflare Access 保护，需要白名单中邮箱登录
+- **production 环境**：workers.dev 域（URL 含账户标识，按隐私扫描规则不在仓库内出现；2026-09-27 首次部署；数据库为空，
+  公开页面呈现设计中的空状态，内容经「评估 → 发布」流程产生。生产未配置 crons——免费版账户 cron
+  上限 5 条、staging 占 4 条，上线切 `ENABLE_CRON` 时需按 `wrangler.jsonc` 注释加回）
+- 后台 `/admin` 由 Cloudflare Access 保护，需要白名单中邮箱登录（workers.dev 域未绑定 Access 策略时，
+  管理端接口按 fail-closed 拒绝，不构成管理面暴露）
 
 ## 本地开发
 
@@ -179,8 +192,8 @@ npm run build
 npm run check:bundle
 ```
 
-`npm run check:bundle` 在生产构建后检查首屏客户端 JavaScript 包体积；图表运行时作为按需加载资源，不计入
-首屏包体积。
+`npm run check:bundle` 在生产构建后检查首屏客户端 JavaScript 包体积，输出当前字节、上限、余量与占用百分比，
+超过上限时以退出码 1 失败；图表运行时作为按需加载资源，不计入首屏包体积。
 
 ### 公开 API 延迟基准
 
@@ -213,15 +226,38 @@ Cloudflare 未发送 `CF-Cache-Status`，工具会记录 `unavailable`，不会�
 
 ## 环境
 
-- local：Wrangler 本地模拟 D1/R2，不访问 Cloudflare 账户。
-- staging：使用独立 `enso-monitor-staging` 资源；配置中的数据库 ID 目前是不可部署占位值。
-- production：使用独立 `enso-monitor-prod` 资源；配置中的数据库 ID 目前是不可部署占位值。
+- local：Wrangler 本地模拟 D1/R2，不访问 Cloudflare 账户。顶层配置保持 `APP_ENV=local` +
+  全零占位 D1 ID，只供本地模拟使用，**不再是部署目标**。
+- staging：使用独立 `enso-monitor-staging` 资源（真实 database_id）；`npm run deploy` 部署的就是该环境。
+- production：使用独立 `enso-monitor-prod` 资源；D1 已创建（2026-09-27，APAC 区）且 0001-0013 迁移已应用，`wrangler.jsonc` 已接入真实 database_id（`deploy:production` 前置断言会校验）。R2 桶 `enso-raw-prod` 尚未创建，首次生产部署前需补建。
 
 在创建真实 Cloudflare 资源后，替换对应环境的 D1 ID。不要提交 `.dev.vars*` 或任何密钥。Cron 默认由
 `ENABLE_CRON=false` 保护；即使启用 Cron，07:00 自动发布也只有在 `ENABLE_AUTO_PUBLICATION` 精确为
 `"true"` 时才进入候选判定。三个环境均默认 `false`，首月保持人工发布。当前即使把该 flag 设为
 `"true"`，完整候选也会以 `AUTOMATIC_PUBLICATION_LIFECYCLE_UNAVAILABLE` 延迟：在六论点转换、四类门禁
 和日报冻结具备单一原子生命周期前，系统不会自动公开或逐条提前发布。
+
+已知但不动作的记录（2026-09-26）：0009 的 `daily_brief_exemptions_by_date` 索引与该表主键
+`(brief_date, thesis_id)` 自动索引的前缀重复，属冗余，按「迁移只增不改」纪律保留，删除需另立迁移；
+`engines` 的 Node 上限已从 `>=24 <25` 放宽为 `>=24`（本地开发环境可能运行 Homebrew Node 25，旧上限会
+误报不支持），`.nvmrc` 仍固定 Node 24 LTS，部署产物运行在 workerd 上、不受本机 Node 大版本影响。
+
+### 部署命令
+
+> **部署机制（2026-09-27 起）**：本项目用 `@cloudflare/vite-plugin` 构建。`vite build` 会生成
+> `.wrangler/deploy/config.json` 重定向，使 `wrangler deploy` 使用 `dist/enso_monitor/wrangler.json`
+> （烘焙产物）而非 `wrangler.jsonc`——**`wrangler deploy` 的 `-e <env>` 标志在该机制下被忽略**。
+> 因此环境选择在构建期完成：deploy 脚本通过 `CLOUDFLARE_ENV=<env> npm run build` 烘焙对应环境。
+> 另：顶层 worker name 已改为 `enso-monitor-local`（不与生产脚本 `enso-monitor` 同名），即使误跑裸
+> `wrangler deploy` 也只会创建无关脚本，不会覆盖生产。请始终通过下列 npm 脚本部署。
+
+- `npm run deploy`：以 `CLOUDFLARE_ENV=staging` 构建并通过 `check:bundle`，然后 `wrangler deploy`
+  按烘焙产物部署 **staging**。
+- `npm run deploy:production`：以 `CLOUDFLARE_ENV=production` 构建并通过 `check:bundle`，先运行
+  `scripts/assert-production-config.mjs`——断言源配置 production 的 D1 `database_id` 为真实值，
+  **并断言烘焙产物确已按 production 烘焙**（APP_ENV、`enso-monitor-prod` 绑定与源一致；用 local
+  产物部署会被以非零码拦截并给出中文说明）——然后才 `wrangler deploy`。production 的 crons 刻意
+  保留在配置中：`ENABLE_CRON=false` 时收到 scheduled 事件即空转返回，上线时只需切换该 flag。
 
 ### Cloudflare staging 只读前置检查
 

@@ -5,7 +5,8 @@ import type {
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
+import { decodeUtf8, unchangedResult } from "./adapter-base";
 
 export const JPX_OSE_SOURCE_ID = "jpx_ose_rubber_settlement";
 export const JPX_OSE_ADAPTER_KEY = "jpx-ose-settlement-v1";
@@ -43,28 +44,46 @@ export const jpxOseSettlementAdapter: SourceAdapter = {
     const pageHeaders = new Headers({ Accept: "text/html" });
     let page: Response;
     try {
-      page = await context.fetch(context.sourceUrl, { headers: pageHeaders, redirect: "follow" });
+      page = await fetchWithinTimeout(context.fetch, context.sourceUrl, {
+        headers: pageHeaders,
+        redirect: "follow",
+      });
     } catch {
       throw new SourceCollectionError("NETWORK", "无法连接 JPX 结算页", { retryable: true });
     }
     if (!page.ok) throw errorForResponse(page);
     const pageBody = await readBodyWithinLimit(page, SETTLEMENT_PAGE_MAX_BYTES);
 
-    const csvHref = extractRubberCsvHref(new TextDecoder().decode(pageBody));
-    const csvUrl = new URL(csvHref, context.sourceUrl).toString();
-
-    const csvHeaders = new Headers({ Accept: "text/csv, text/plain" });
-    if (context.previousContentHash !== null) {
-      csvHeaders.set("If-None-Match", `"${context.previousContentHash}"`);
+    const csvHref = extractRubberCsvHref(decodeUtf8(pageBody, "JPX settlement 页 不是有效 UTF-8"));
+    const csvUrl = new URL(csvHref, context.sourceUrl);
+    // 页面内容被注入/改版为站外绝对链接时，绝不向 www.jpx.co.jp 之外发起抓取。
+    if (csvUrl.host !== "www.jpx.co.jp" || !csvUrl.pathname.includes("settlement-price/")) {
+      throw new SourceCollectionError(
+        "SCHEMA_DRIFT",
+        `JPX 结算 CSV 链接不在 www.jpx.co.jp 结算价目录下：${csvUrl.host}`,
+      );
     }
+
+    // 不伪造 If-None-Match：previousContentHash 是快照内容哈希而非 ETag，伪条件请求
+    // 既不可能命中，也会让上游缓存语义失真。304 只能来自上游自身的缓存判断，防御性
+    // 视为 unchanged（复用既有游标哈希，不写快照、不落观测）。
+    const csvHeaders = new Headers({ Accept: "text/csv, text/plain" });
     let csv: Response;
     try {
-      csv = await context.fetch(csvUrl, { headers: csvHeaders, redirect: "follow" });
+      csv = await fetchWithinTimeout(context.fetch, csvUrl, { headers: csvHeaders, redirect: "follow" });
     } catch {
       throw new SourceCollectionError("NETWORK", "无法连接 JPX 结算 CSV", { retryable: true });
     }
     const lastModified = csv.headers.get("last-modified");
     const contentType = csv.headers.get("content-type");
+    if (csv.status === 304) {
+      return unchangedResult(context, {
+        etag: null,
+        lastModified,
+        contentType,
+        contentHash: context.previousContentHash,
+      });
+    }
     if (!csv.ok) throw errorForResponse(csv);
 
     const rawBody = await readBodyWithinLimit(csv, MAX_RESPONSE_BYTES);
@@ -74,7 +93,7 @@ export const jpxOseSettlementAdapter: SourceAdapter = {
     if (tradeDate === null) {
       throw new SourceCollectionError("SCHEMA_DRIFT", `JPX 结算 CSV 文件名不带业务日：${csvHref}`);
     }
-    const rows = parseRubberSettlementRows(new TextDecoder().decode(rawBody));
+    const rows = parseRubberSettlementRows(decodeUtf8(rawBody, "JPX 结算 CSV 不是有效 UTF-8"));
 
     const rss3 = selectNearbyContract(
       rows.filter((row) => isRowKind(row, "RSS3")), tradeDate,
@@ -137,16 +156,27 @@ export function parseRubberSettlementRows(csvText: string): readonly RubberSettl
     throw new SourceCollectionError("SCHEMA_DRIFT", "JPX 结算 CSV 缺少 Issue Code 表头");
   }
   const rows: RubberSettlementRow[] = [];
+  let badRowCount = 0;
   for (const line of lines.slice(headerIndex + 1)) {
     if (line.trim() === "") continue;
     const fields = line.split(",");
-    const issueName = fields[1] ?? "";
+    const issueCode = fields[1] ?? "";
+    if (!/^FUT_(RSS3|TSR2)_/.test(issueCode)) continue; // 其它品种行不属于本适配器契约
     const contractMonth = fields[3] ?? "";
     const settlementRaw = fields[5] ?? "";
-    if (!/^FUT_(RSS3|TSR2)_/.test(issueName)) continue;
-    if (!/^\d{6}$/.test(contractMonth)) continue;
-    if (!/^\d+(?:\.\d+)?$/.test(settlementRaw)) continue;
-    rows.push({ issueName, contractMonth, settlement: Number(settlementRaw) });
+    // 橡胶行必须整体匹配冻结的列形状：裸逗号切分遇到带引号/缺列的行会产生错位字段，
+    // 静默跳过会把「就近合约选错/丢行」伪装成正常数据——这里计数并 fail-closed。
+    if (!/^\d{6}$/.test(contractMonth) || !/^\d+(?:\.\d+)?$/.test(settlementRaw)) {
+      badRowCount += 1;
+      continue;
+    }
+    rows.push({ issueName: issueCode, contractMonth, settlement: Number(settlementRaw) });
+  }
+  if (badRowCount > 0) {
+    throw new SourceCollectionError(
+      "SCHEMA_DRIFT",
+      `JPX 结算 CSV 含 ${badRowCount} 条形状漂移的橡胶行（疑似引号/缺列）`,
+    );
   }
   if (rows.length === 0) {
     throw new SourceCollectionError("SCHEMA_DRIFT", "JPX 结算 CSV 没有 RSS3/TSR20 行");

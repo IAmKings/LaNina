@@ -9,6 +9,8 @@ import type {
 } from "./evaluation";
 import { evaluateRulePredicate } from "./rule-predicate";
 import { evaluateStageGates, validateEvidenceSelection } from "./stage-gate";
+import { compareSelectedLatestFirst, compareText, scaledEpsilonTolerance } from "./internal/compare";
+import { deepFreeze } from "./internal/freeze";
 import type { RuleDescriptor, ThesisSeed } from "./thesis-seeds";
 
 export const MATERIAL_CHANGE_CLASSES = ["fact", "thesis"] as const;
@@ -549,7 +551,18 @@ function materialChangeSemanticIdentity(change: ChangeWithoutKey): object {
   };
   switch (change.changeType) {
     case "thesis":
-      return { ...identity, triggers: change.triggers, before: change.before, after: change.after };
+      // thesis 变化的触发与前后状态会随任一侧 cutoff 的证据演化而重放；把 before/after cutoff
+      // 纳入语义身份，保证「相同触发跨 cutoff 重放」产生新的 change key，而不是被旧评估的去重
+      // 逻辑吞掉。threshold/revision 事实变化以 (selector, observedAt, revision) 定位，键保持
+      // 与 cutoff 无关（审计字段仍单独携带实际 cutoff）。
+      return {
+        ...identity,
+        beforeCutoff: change.beforeCutoff,
+        afterCutoff: change.afterCutoff,
+        triggers: change.triggers,
+        before: change.before,
+        after: change.after,
+      };
     case "threshold":
       return {
         ...identity,
@@ -594,13 +607,6 @@ function compareChangesWithoutKey(left: ChangeWithoutKey, right: ChangeWithoutKe
     || compareText(canonicalJson(left), canonicalJson(right));
 }
 
-function compareSelectedLatestFirst(left: SelectedEvidence, right: SelectedEvidence): number {
-  return compareText(left.selectorId, right.selectorId)
-    || compareText(right.observedAt, left.observedAt)
-    || right.revision - left.revision
-    || compareText(left.evidenceId, right.evidenceId);
-}
-
 function isCanonicalFiniteNumber(value: number | string): value is number {
   return typeof value === "number" && Number.isFinite(value) && !Object.is(value, -0);
 }
@@ -611,7 +617,9 @@ function meetsInclusiveDelta(
   before: number,
   after: number,
 ): boolean {
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(before), Math.abs(after), required) * 4;
+  // 容差口径与 rule-predicate 的 numeric_compare 共用（internal/compare 的 4×EPSILON 缩放
+  // 容差，D3 签字）：before/after 一并参与标定，吸收大数相减的表示误差。
+  const tolerance = scaledEpsilonTolerance(before, after, required);
   return actual > required || Math.abs(actual - required) <= tolerance;
 }
 
@@ -625,14 +633,4 @@ function changeTypeOrder(type: MaterialChangeType): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

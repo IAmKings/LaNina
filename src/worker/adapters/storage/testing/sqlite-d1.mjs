@@ -14,6 +14,10 @@ const MIGRATIONS = [
   "0008_admin_manual_source_runs.sql",
   "0009_daily_brief_exemptions.sql",
   "0010_daily_brief_exemptions_trigger.sql",
+  "0011_source_runs_finished_index.sql",
+  "0012_daily_brief_link_exemption_disjoint.sql",
+  "0013_changes_query_indexes.sql",
+  "0014_derived_indicators.sql",
 ];
 
 const BASE_SEEDS = [

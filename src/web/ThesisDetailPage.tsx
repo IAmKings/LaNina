@@ -4,7 +4,9 @@ import type { ApiEnvelope } from "../domain/contracts";
 import type { ThesisEvidenceModel, ThesisPageModel } from "../domain/page-models";
 import { IndicatorChart } from "./IndicatorChart";
 import { chartPointSymbol } from "./indicator-markers";
-import { directionLabel, formatShanghaiTime, stageLabel } from "./overview-view";
+import { isAbort } from "./is-abort";
+import { directionLabel, stageLabel } from "./overview-view";
+import { formatShanghaiTime } from "./shanghai-time";
 import { evidenceQualityLabel, evidenceStanceLabel, transmissionStages } from "./thesis-view";
 
 type ThesisState =
@@ -30,7 +32,7 @@ export function ThesisDetailPage({ slug }: { slug: string }) {
         setState({ status: "ready", data: body.data });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbort(error, controller.signal)) return;
         setState({ status: "error" });
       });
     return () => controller.abort();

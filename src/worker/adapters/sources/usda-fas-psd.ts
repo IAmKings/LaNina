@@ -1,12 +1,12 @@
 import type {
   CollectContext,
-  CollectResult,
   ObservationInput,
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
 import { parseCanonicalUtc } from "../../ingestion/time";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { createHttpSourceAdapter } from "./adapter-base";
+import type { HttpSourceRequestPlan } from "./adapter-base";
 
 export const USDA_FAS_PSD_ADAPTER_KEY = "usda-fas-psd-v1";
 export const USDA_FAS_PSD_SOURCE_URL = "https://api.fas.usda.gov/api/psd";
@@ -71,96 +71,72 @@ interface ParsedPsdRow {
  * CollectContext, a source URL, a result, or persisted metadata.
  */
 export function createUsdaFasPsdAdapter(apiKey?: string): SourceAdapter {
-  return {
+  return createHttpSourceAdapter({
     key: USDA_FAS_PSD_ADAPTER_KEY,
-
-    async collect(context: CollectContext): Promise<CollectResult> {
-      const config = sourceConfig(context.sourceId);
-      if (config === undefined || context.sourceUrl !== USDA_FAS_PSD_SOURCE_URL) {
-        throw new SourceCollectionError(
-          "VALIDATION",
-          "USDA FAS PSD 来源 ID 或地址不在允许列表",
-        );
-      }
-      if (apiKey === undefined || apiKey.trim().length === 0) {
-        throw new SourceCollectionError("AUTH", "USDA FAS PSD API 密钥未配置");
-      }
-
+    sourceKey: "USDA FAS PSD",
+    maxBytes: USDA_FAS_PSD_MAX_BYTES,
+    accept: "application/json",
+    redirect: "manual",
+    mediaType: {
+      kind: "equals",
+      value: "application/json",
+      driftMessage: "USDA FAS PSD 响应不再是 JSON",
+    },
+    body: { kind: "utf8", driftMessage: "USDA FAS PSD 响应不是有效 UTF-8" },
+    secret: { value: apiKey ?? "", driftMessage: "USDA FAS PSD 响应包含不应回显的认证信息" },
+    prepare(context) {
+      return resolveUsdaRequest(apiKey, context);
+    },
+    parse(decoded, context) {
+      const config = requireSourceConfig(context.sourceId);
       const marketYear = marketYearAt(context.scheduledAt, config.marketYearStartMonth);
-      const requestUrl = buildRequestUrl(config, marketYear);
-      const headers = new Headers({
-        Accept: "application/json",
-        "X-Api-Key": apiKey,
-      });
-      if (context.previousEtag !== null) headers.set("If-None-Match", context.previousEtag);
-      if (context.previousLastModified !== null) {
-        headers.set("If-Modified-Since", context.previousLastModified);
-      }
-
-      let response: Response;
-      try {
-        response = await context.fetch(requestUrl, { headers, redirect: "manual" });
-      } catch (error) {
-        throw new SourceCollectionError("NETWORK", "无法连接 USDA FAS PSD", {
-          retryable: true,
-          cause: error,
-        });
-      }
-
-      const etag = response.headers.get("etag");
-      const lastModified = response.headers.get("last-modified");
-      const contentType = response.headers.get("content-type");
-      if (response.status === 304) {
-        return unchangedResult(context, {
-          etag: etag ?? context.previousEtag,
-          lastModified: lastModified ?? context.previousLastModified,
-          contentType,
-          contentHash: context.previousContentHash,
-        });
-      }
-      if (!response.ok) throw errorForResponse(response);
-      const mediaType = contentType?.split(";", 1)[0].trim().toLowerCase();
-      if (mediaType !== "application/json") {
-        throw schemaDrift("USDA FAS PSD 响应不再是 JSON");
-      }
-
-      const rawBody = await readBodyWithinLimit(response, USDA_FAS_PSD_MAX_BYTES);
-      const decoded = decodeUtf8(rawBody);
-      if (decoded.includes(apiKey)) {
-        throw schemaDrift("USDA FAS PSD 响应包含不应回显的认证信息");
-      }
-      const contentHash = await sha256Hex(rawBody);
-      if (contentHash === context.previousContentHash) {
-        return unchangedResult(context, { etag, lastModified, contentType, contentHash });
-      }
-
       const rows = parseRows(decoded, config, marketYear);
       const { observations, warnings } = observationsForRows(
         rows,
         config,
         marketYear,
         context.fetchedAt,
-        requestUrl,
+        buildRequestUrl(config, marketYear),
       );
       if (observations.length === 0) {
         throw new SourceCollectionError("VALIDATION", "USDA FAS PSD 缺少全部选定属性");
       }
 
-      return {
-        sourceId: context.sourceId,
-        fetchedAt: context.fetchedAt,
-        sourcePublishedAt: null,
-        etag,
-        lastModified,
-        contentType,
-        contentHash,
-        rawBody,
-        observations,
-        warnings,
-        status: warnings.length === 0 ? "changed" : "partial",
-      };
+      return { observations, warnings, status: warnings.length === 0 ? "changed" : "partial" };
     },
+  });
+}
+
+/** 允许列表与密钥校验保持在 fetch 之前；市场年请求 URL 与认证头在此统一推导。 */
+function resolveUsdaRequest(
+  apiKey: string | undefined,
+  context: CollectContext,
+): HttpSourceRequestPlan {
+  const config = sourceConfig(context.sourceId);
+  if (config === undefined || context.sourceUrl !== USDA_FAS_PSD_SOURCE_URL) {
+    throw new SourceCollectionError(
+      "VALIDATION",
+      "USDA FAS PSD 来源 ID 或地址不在允许列表",
+    );
+  }
+  if (apiKey === undefined || apiKey.trim().length === 0) {
+    throw new SourceCollectionError("AUTH", "USDA FAS PSD API 密钥未配置");
+  }
+  return {
+    url: buildRequestUrl(config, marketYearAt(context.scheduledAt, config.marketYearStartMonth)),
+    headers: { "X-Api-Key": apiKey },
   };
+}
+
+function requireSourceConfig(sourceId: string): UsdaPsdSourceConfig {
+  const config = sourceConfig(sourceId);
+  if (config === undefined) {
+    throw new SourceCollectionError(
+      "VALIDATION",
+      "USDA FAS PSD 来源 ID 或地址不在允许列表",
+    );
+  }
+  return config;
 }
 
 function sourceConfig(sourceId: string): UsdaPsdSourceConfig | undefined {
@@ -321,14 +297,6 @@ function marketYearPeriod(
   return { periodStart: periodStart.toISOString(), observedAt: periodEnd.toISOString() };
 }
 
-function decodeUtf8(bytes: Uint8Array): string {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw schemaDrift("USDA FAS PSD 响应不是有效 UTF-8");
-  }
-}
-
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw schemaDrift(`${field} 结构变化`);
@@ -358,20 +326,4 @@ function isSelectedAttribute(
 
 function schemaDrift(message: string): SourceCollectionError {
   return new SourceCollectionError("SCHEMA_DRIFT", message);
-}
-
-function unchangedResult(
-  context: CollectContext,
-  metadata: Pick<CollectResult, "etag" | "lastModified" | "contentType" | "contentHash">,
-): CollectResult {
-  return {
-    sourceId: context.sourceId,
-    fetchedAt: context.fetchedAt,
-    sourcePublishedAt: null,
-    ...metadata,
-    rawBody: null,
-    observations: [],
-    warnings: [],
-    status: "unchanged",
-  };
 }

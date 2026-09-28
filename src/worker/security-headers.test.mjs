@@ -16,6 +16,11 @@ describe("response security headers", () => {
     expect(SECURITY_RESPONSE_HEADERS["strict-transport-security"]).not.toMatch(/(?:^|;)\s*preload(?:;|$)/);
   });
 
+  it("isolates browsing contexts and blocks cross-origin resource reads", () => {
+    expect(SECURITY_RESPONSE_HEADERS["cross-origin-opener-policy"]).toBe("same-origin");
+    expect(SECURITY_RESPONSE_HEADERS["cross-origin-resource-policy"]).toBe("same-origin");
+  });
+
   it("hardens a response without changing its status, body or route-owned headers", async () => {
     const response = withSecurityHeaders(new globalThis.Response("preserved body", {
       status: 202,

@@ -115,7 +115,7 @@ exports[`evaluateDirectionAndConfidence > applies forecast-only 49, required-lay
     },
     "cutoff": "2026-09-08T12:00:00.000Z",
     "direction": {
-      "direction": "mixed",
+      "direction": "neutral",
       "marketScope": "test scoped market",
       "matchedDirections": [
         "bullish",
@@ -124,7 +124,7 @@ exports[`evaluateDirectionAndConfidence > applies forecast-only 49, required-lay
       "methodologyVersion": "test-reviewed-v1",
       "policyVersion": "test-direction-v1",
       "reasons": [
-        "命中多个不同方向 bullish/bearish，按固定冲突规则解析为 mixed",
+        "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
       ],
       "regionDefinitionVersion": "test-region-v1",
       "ruleHits": [
@@ -175,7 +175,7 @@ exports[`evaluateDirectionAndConfidence > applies forecast-only 49, required-lay
           "ruleId": "support-weather",
         },
       ],
-      "status": "available",
+      "status": "unavailable",
       "target": "test scoped target",
       "thesisId": "TEST-01",
       "timeHorizon": "next test horizon",
@@ -277,14 +277,16 @@ exports[`evaluateDirectionAndConfidence > applies forecast-only 49, required-lay
     },
     "cutoff": "2026-09-08T12:00:00.000Z",
     "direction": {
-      "direction": "bullish",
+      "direction": "neutral",
       "marketScope": "test scoped market",
       "matchedDirections": [
         "bullish",
       ],
       "methodologyVersion": "test-reviewed-v1",
       "policyVersion": "test-direction-v1",
-      "reasons": [],
+      "reasons": [
+        "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
+      ],
       "regionDefinitionVersion": "test-region-v1",
       "ruleHits": [
         {
@@ -332,7 +334,7 @@ exports[`evaluateDirectionAndConfidence > applies forecast-only 49, required-lay
           "ruleId": "support-weather",
         },
       ],
-      "status": "available",
+      "status": "unavailable",
       "target": "test scoped target",
       "thesisId": "TEST-01",
       "timeHorizon": "next test horizon",
@@ -354,9 +356,9 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
     "appliedCaps": [],
     "components": {
       "agreement": 100,
-      "coverage": 100,
-      "freshness": 72,
-      "sourceQuality": 83,
+      "coverage": 83,
+      "freshness": 66,
+      "sourceQuality": 76,
     },
     "explanations": {
       "agreement": {
@@ -374,30 +376,37 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
         "supportWeight": 100,
       },
       "coverage": {
-        "missingLayers": [],
+        "missingLayers": [
+          "forecast",
+        ],
         "presentLayers": [
           "weather",
           "physical",
           "balance",
           "market",
+          "control",
         ],
         "requiredLayers": [
+          "forecast",
           "weather",
           "physical",
           "balance",
           "market",
+          "control",
         ],
         "staleLayers": [],
       },
       "freshness": {
         "currentEvidenceIds": [
           "evidence-balance-current",
+          "evidence-control-current",
           "evidence-market-current",
           "evidence-physical-current",
           "evidence-weather-support-current",
         ],
         "freshSelectorIds": [
           "balance",
+          "control",
           "market",
           "weather-support",
         ],
@@ -405,6 +414,7 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
           "physical",
         ],
         "missingSelectorIds": [
+          "forecast",
           "weather-refute",
         ],
         "staleSelectorIds": [],
@@ -412,6 +422,7 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
       "sourceQuality": {
         "currentEvidenceIds": [
           "evidence-balance-current",
+          "evidence-control-current",
           "evidence-market-current",
           "evidence-physical-current",
           "evidence-weather-support-current",
@@ -423,7 +434,7 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
         },
       },
     },
-    "finalScore": 89,
+    "finalScore": 80,
     "policyVersion": "test-confidence-v1",
     "reasons": [
       "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -432,18 +443,20 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
     ],
     "roundingRule": "round_half_up_after_weighted_sum",
     "status": "available",
-    "weightedScore": 89,
+    "weightedScore": 80,
   },
   "cutoff": "2026-09-08T12:00:00.000Z",
   "direction": {
-    "direction": "bullish",
+    "direction": "neutral",
     "marketScope": "test scoped market",
     "matchedDirections": [
       "bullish",
     ],
     "methodologyVersion": "test-reviewed-v1",
     "policyVersion": "test-direction-v1",
-    "reasons": [],
+    "reasons": [
+      "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
+    ],
     "regionDefinitionVersion": "test-region-v1",
     "ruleHits": [
       {
@@ -497,7 +510,7 @@ exports[`evaluateDirectionAndConfidence > calculates all four components with fi
         "ruleId": "support-forecast",
       },
     ],
-    "status": "available",
+    "status": "unavailable",
     "target": "test scoped target",
     "thesisId": "TEST-01",
     "timeHorizon": "next test horizon",
@@ -519,8 +532,8 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
       "appliedCaps": [],
       "components": {
         "agreement": 100,
-        "coverage": 100,
-        "freshness": 50,
+        "coverage": 17,
+        "freshness": 14,
         "sourceQuality": 100,
       },
       "explanations": {
@@ -534,12 +547,23 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           "supportWeight": 30,
         },
         "coverage": {
-          "missingLayers": [],
+          "missingLayers": [
+            "forecast",
+            "physical",
+            "balance",
+            "market",
+            "control",
+          ],
           "presentLayers": [
             "weather",
           ],
           "requiredLayers": [
+            "forecast",
             "weather",
+            "physical",
+            "balance",
+            "market",
+            "control",
           ],
           "staleLayers": [],
         },
@@ -552,6 +576,11 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           ],
           "lateSelectorIds": [],
           "missingSelectorIds": [
+            "balance",
+            "control",
+            "forecast",
+            "market",
+            "physical",
             "weather-refute",
           ],
           "staleSelectorIds": [],
@@ -567,7 +596,7 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           },
         },
       },
-      "finalScore": 88,
+      "finalScore": 54,
       "policyVersion": "test-confidence-v1",
       "reasons": [
         "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -576,7 +605,7 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
       ],
       "roundingRule": "round_half_up_after_weighted_sum",
       "status": "available",
-      "weightedScore": 88,
+      "weightedScore": 54,
     },
     "cutoff": "2026-09-08T12:00:00.000Z",
     "direction": {
@@ -650,8 +679,8 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
       "appliedCaps": [],
       "components": {
         "agreement": 100,
-        "coverage": 100,
-        "freshness": 50,
+        "coverage": 17,
+        "freshness": 14,
         "sourceQuality": 100,
       },
       "explanations": {
@@ -665,12 +694,23 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           "supportWeight": 0,
         },
         "coverage": {
-          "missingLayers": [],
+          "missingLayers": [
+            "forecast",
+            "physical",
+            "balance",
+            "market",
+            "control",
+          ],
           "presentLayers": [
             "weather",
           ],
           "requiredLayers": [
+            "forecast",
             "weather",
+            "physical",
+            "balance",
+            "market",
+            "control",
           ],
           "staleLayers": [],
         },
@@ -683,6 +723,11 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           ],
           "lateSelectorIds": [],
           "missingSelectorIds": [
+            "balance",
+            "control",
+            "forecast",
+            "market",
+            "physical",
             "weather-support",
           ],
           "staleSelectorIds": [],
@@ -698,7 +743,7 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           },
         },
       },
-      "finalScore": 88,
+      "finalScore": 54,
       "policyVersion": "test-confidence-v1",
       "reasons": [
         "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -707,18 +752,20 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
       ],
       "roundingRule": "round_half_up_after_weighted_sum",
       "status": "available",
-      "weightedScore": 88,
+      "weightedScore": 54,
     },
     "cutoff": "2026-09-08T12:00:00.000Z",
     "direction": {
-      "direction": "bearish",
+      "direction": "neutral",
       "marketScope": "test scoped market",
       "matchedDirections": [
         "bearish",
       ],
       "methodologyVersion": "test-reviewed-v1",
       "policyVersion": "test-direction-v1",
-      "reasons": [],
+      "reasons": [
+        "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
+      ],
       "regionDefinitionVersion": "test-region-v1",
       "ruleHits": [
         {
@@ -766,7 +813,7 @@ exports[`evaluateDirectionAndConfidence > does not let a support rule consume re
           "ruleId": "support-weather",
         },
       ],
-      "status": "available",
+      "status": "unavailable",
       "target": "test scoped target",
       "thesisId": "TEST-01",
       "timeHorizon": "next test horizon",
@@ -803,12 +850,23 @@ exports[`evaluateDirectionAndConfidence > fails closed when the stage result bel
         "supportWeight": 30,
       },
       "coverage": {
-        "missingLayers": [],
+        "missingLayers": [
+          "forecast",
+          "physical",
+          "balance",
+          "market",
+          "control",
+        ],
         "presentLayers": [
           "weather",
         ],
         "requiredLayers": [
+          "forecast",
           "weather",
+          "physical",
+          "balance",
+          "market",
+          "control",
         ],
         "staleLayers": [],
       },
@@ -821,6 +879,11 @@ exports[`evaluateDirectionAndConfidence > fails closed when the stage result bel
         ],
         "lateSelectorIds": [],
         "missingSelectorIds": [
+          "balance",
+          "control",
+          "forecast",
+          "market",
+          "physical",
           "weather-refute",
         ],
         "staleSelectorIds": [],
@@ -956,14 +1019,16 @@ exports[`evaluateDirectionAndConfidence > keeps a price-only result at watch wit
   },
   "cutoff": "2026-09-08T12:00:00.000Z",
   "direction": {
-    "direction": "bullish",
+    "direction": "neutral",
     "marketScope": "test scoped market",
     "matchedDirections": [
       "bullish",
     ],
     "methodologyVersion": "test-reviewed-v1",
     "policyVersion": "test-direction-v1",
-    "reasons": [],
+    "reasons": [
+      "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
+    ],
     "regionDefinitionVersion": "test-region-v1",
     "ruleHits": [
       {
@@ -1011,7 +1076,7 @@ exports[`evaluateDirectionAndConfidence > keeps a price-only result at watch wit
         "ruleId": "support-weather",
       },
     ],
-    "status": "available",
+    "status": "unavailable",
     "target": "test scoped target",
     "thesisId": "TEST-01",
     "timeHorizon": "next test horizon",
@@ -1188,8 +1253,8 @@ exports[`evaluateDirectionAndConfidence > resolves balanced conflicting directio
     ],
     "components": {
       "agreement": 0,
-      "coverage": 100,
-      "freshness": 100,
+      "coverage": 17,
+      "freshness": 29,
       "sourceQuality": 100,
     },
     "explanations": {
@@ -1205,12 +1270,23 @@ exports[`evaluateDirectionAndConfidence > resolves balanced conflicting directio
         "supportWeight": 30,
       },
       "coverage": {
-        "missingLayers": [],
+        "missingLayers": [
+          "forecast",
+          "physical",
+          "balance",
+          "market",
+          "control",
+        ],
         "presentLayers": [
           "weather",
         ],
         "requiredLayers": [
+          "forecast",
           "weather",
+          "physical",
+          "balance",
+          "market",
+          "control",
         ],
         "staleLayers": [],
       },
@@ -1224,7 +1300,13 @@ exports[`evaluateDirectionAndConfidence > resolves balanced conflicting directio
           "weather-support",
         ],
         "lateSelectorIds": [],
-        "missingSelectorIds": [],
+        "missingSelectorIds": [
+          "balance",
+          "control",
+          "forecast",
+          "market",
+          "physical",
+        ],
         "staleSelectorIds": [],
       },
       "sourceQuality": {
@@ -1239,7 +1321,7 @@ exports[`evaluateDirectionAndConfidence > resolves balanced conflicting directio
         },
       },
     },
-    "finalScore": 69,
+    "finalScore": 37,
     "policyVersion": "test-confidence-v1",
     "reasons": [
       "固定公式：coverage×30% + freshness×25% + sourceQuality×25% + agreement×20%",
@@ -1249,7 +1331,7 @@ exports[`evaluateDirectionAndConfidence > resolves balanced conflicting directio
     ],
     "roundingRule": "round_half_up_after_weighted_sum",
     "status": "available",
-    "weightedScore": 80,
+    "weightedScore": 37,
   },
   "cutoff": "2026-09-08T12:00:00.000Z",
   "direction": {
@@ -1485,8 +1567,8 @@ exports[`evaluateDirectionAndConfidence > treats support-only and refute-only ev
       "appliedCaps": [],
       "components": {
         "agreement": 100,
-        "coverage": 100,
-        "freshness": 50,
+        "coverage": 17,
+        "freshness": 14,
         "sourceQuality": 100,
       },
       "explanations": {
@@ -1500,12 +1582,23 @@ exports[`evaluateDirectionAndConfidence > treats support-only and refute-only ev
           "supportWeight": 30,
         },
         "coverage": {
-          "missingLayers": [],
+          "missingLayers": [
+            "forecast",
+            "physical",
+            "balance",
+            "market",
+            "control",
+          ],
           "presentLayers": [
             "weather",
           ],
           "requiredLayers": [
+            "forecast",
             "weather",
+            "physical",
+            "balance",
+            "market",
+            "control",
           ],
           "staleLayers": [],
         },
@@ -1518,6 +1611,11 @@ exports[`evaluateDirectionAndConfidence > treats support-only and refute-only ev
           ],
           "lateSelectorIds": [],
           "missingSelectorIds": [
+            "balance",
+            "control",
+            "forecast",
+            "market",
+            "physical",
             "weather-refute",
           ],
           "staleSelectorIds": [],
@@ -1533,7 +1631,7 @@ exports[`evaluateDirectionAndConfidence > treats support-only and refute-only ev
           },
         },
       },
-      "finalScore": 88,
+      "finalScore": 54,
       "policyVersion": "test-confidence-v1",
       "reasons": [
         "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -1542,7 +1640,7 @@ exports[`evaluateDirectionAndConfidence > treats support-only and refute-only ev
       ],
       "roundingRule": "round_half_up_after_weighted_sum",
       "status": "available",
-      "weightedScore": 88,
+      "weightedScore": 54,
     },
     "cutoff": "2026-09-08T12:00:00.000Z",
     "direction": {

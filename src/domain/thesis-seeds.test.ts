@@ -9,6 +9,15 @@ import { decodeConfidenceComponents } from "./evaluation";
 import { INITIAL_THESIS_SEEDS } from "./initial-thesis-seeds";
 import { decodeThesisSeed, EVALUATION_INDICATOR_IDS } from "./thesis-seeds";
 
+function ruleIds(seed: (typeof INITIAL_THESIS_SEEDS)[number]): string[] {
+  return [
+    ...seed.supportRules,
+    ...seed.refuteRules,
+    ...seed.invalidationRules,
+    ...seed.reliefRules,
+  ].map(({ id }) => id);
+}
+
 function mutableSeed(index = 0): Record<string, unknown> {
   return JSON.parse(JSON.stringify(INITIAL_THESIS_SEEDS[index])) as Record<string, unknown>;
 }
@@ -89,7 +98,76 @@ describe("initial thesis seed contract", () => {
         sourceTierScores: { A: 100, B: 85, C: 70 },
         missingRequiredLayerCap: 49,
         coverageGapCap: 69,
+        forecastOnlyCap: 49,
+        requiredLayerStaleCap: 59,
+        unexplainedConflictCap: 69,
       });
+    }
+  });
+
+  it("adds the signed ENSO numeric rule by composition while the other five seeds keep presence-only rules", () => {
+    // D3 签字（2026-09-26，threshold-worksheet §2.1/§7）：ENSO-CORE-01 新增 enso-numeric-support
+    // （RONI ≥ +0.5°C，NOAA 弱档下限=事件确立线；单位与 noaa-roni 适配器输出逐字一致）。
+    const enso = INITIAL_THESIS_SEEDS[0];
+    if (enso?.id !== "ENSO-CORE-01") throw new TypeError("expected ENSO-CORE-01 as the first seed");
+    expect(enso.supportRules.map(({ id }) => id)).toEqual(["enso-support", "enso-numeric-support"]);
+    const numeric = enso.supportRules[1];
+    expect(numeric).toEqual({
+      id: "enso-numeric-support",
+      label: "RONI 达到或超过 +0.5°C（厄尔尼诺事件确立线）",
+      reviewStatus: "approved",
+      active: true,
+      predicate: {
+        kind: "numeric_compare",
+        selectorId: "enso-roni",
+        operator: "gte",
+        threshold: 0.5,
+        unit: "°C",
+      },
+    });
+    // 组合而非替换：其余三类规则与阶段门引用保持原状（存在性条件继续供阶段门使用）。
+    expect(enso.refuteRules.map(({ id }) => id)).toEqual(["enso-refute"]);
+    expect(enso.invalidationRules.map(({ id }) => id)).toEqual(["enso-invalidate"]);
+    expect(enso.reliefRules.map(({ id }) => id)).toEqual(["enso-relief"]);
+    for (const gate of enso.stageGates) {
+      expect(gate.ruleIds).toEqual(
+        gate.targetStage === "easing" ? ["enso-relief", "enso-invalidate"] : ["enso-support"],
+      );
+    }
+    // 方向仍由 id 后缀机制推断：-support → bullish，与 enso-support 同向。
+    expect(enso.directionPolicy.mappings).toEqual(expect.arrayContaining([
+      { ruleId: "enso-support", direction: "bullish" },
+      { ruleId: "enso-numeric-support", direction: "bullish" },
+      { ruleId: "enso-refute", direction: "bearish" },
+      { ruleId: "enso-invalidate", direction: null },
+      { ruleId: "enso-relief", direction: "bearish" },
+    ]));
+    // 2026-09-27 回填签字：橡胶/棕榈/玉米追加数值规则。存在性规则 id 与阶段门 ruleIds 不动。
+    // USEC / 欧线仍无 numeric_compare（USEC 等 ACP 权利预审）。
+    expect(ruleIds(INITIAL_THESIS_SEEDS[1]!)).toEqual([
+      "rubber-support", "rubber-numeric-anomaly-support", "rubber-refute", "rubber-invalidate", "rubber-relief",
+    ]);
+    expect(ruleIds(INITIAL_THESIS_SEEDS[2]!)).toEqual([
+      "palm-support", "palm-numeric-rain-support", "palm-numeric-stocks-support",
+      "palm-refute", "palm-invalidate", "palm-relief",
+    ]);
+    expect(ruleIds(INITIAL_THESIS_SEEDS[3]!)).toEqual([
+      "maize-support", "maize-numeric-mean-support", "maize-numeric-window-support",
+      "maize-refute", "maize-invalidate", "maize-relief",
+    ]);
+    expect(ruleIds(INITIAL_THESIS_SEEDS[4]!)).toEqual([
+      "usec-support", "usec-refute", "usec-invalidate", "usec-relief",
+    ]);
+    expect(ruleIds(INITIAL_THESIS_SEEDS[5]!)).toEqual([
+      "eu-support", "eu-refute", "eu-invalidate", "eu-relief",
+    ]);
+    for (const seed of INITIAL_THESIS_SEEDS.slice(1)) {
+      const prefix = seed.supportRules[0]!.id.replace(/-support$/, "");
+      for (const gate of seed.stageGates) {
+        expect(gate.ruleIds).toEqual(
+          gate.targetStage === "easing" ? [`${prefix}-relief`, `${prefix}-invalidate`] : [`${prefix}-support`],
+        );
+      }
     }
   });
 
@@ -181,6 +259,21 @@ describe("initial thesis seed contract", () => {
     expect(() => decodeThesisSeed(approvedGateWithPendingRule)).toThrow(/pending items must be/);
   });
 
+  it("requires an approved easing gate to cover the weather_realized gate layers", () => {
+    // M6 吸收态护栏（通用规则）：easing 是终端缓解态，不得以弱于天气兑现的证据进入或保持。
+    // SHIP-USEC-01 的 weather_realized 要求 weather；把 easing 的层集改为不含 weather 即被拒。
+    const weakEasing = mutableSeed(4);
+    const usecGates = objectArray(weakEasing.stageGates);
+    const easingGate = usecGates.find((gate) => gate.targetStage === "easing");
+    if (easingGate === undefined) throw new Error("test fixture is missing the easing gate");
+    easingGate.requiredLayers = ["physical"];
+    expect(() => decodeThesisSeed(weakEasing))
+      .toThrow(/easing gate 的必需证据层必须覆盖 weather_realized gate 的必需证据层，缺失 weather/);
+
+    const satisfiedEasing = mutableSeed(4);
+    expect(() => decodeThesisSeed(satisfiedEasing)).not.toThrow();
+  });
+
   it("keeps pending gate thresholds inactive and rejects unsatisfiable layer mappings", () => {
     // D 组 D4 后门槛已 approved；这里显式退回 pending 来守住"未审核门槛不得声明阈值"的不变式。
     const pendingThreshold = mutableSeed();
@@ -251,6 +344,11 @@ describe("initial thesis seed contract", () => {
     Object.assign(objectAt(pendingLateScore.confidencePolicy), { reviewStatus: "pending", active: false });
     objectAt(pendingLateScore.confidencePolicy).lateFreshnessScore = 50;
     expect(() => decodeThesisSeed(pendingLateScore)).toThrow(/pending confidence policy/);
+
+    const pendingCap = mutableSeed();
+    Object.assign(objectAt(pendingCap.confidencePolicy), { reviewStatus: "pending", active: false });
+    objectAt(pendingCap.confidencePolicy).forecastOnlyCap = 49;
+    expect(() => decodeThesisSeed(pendingCap)).toThrow(/pending confidence policy must not claim/);
 
     const invalidTierScore = mutableSeed();
     objectAt(objectAt(invalidTierScore.confidencePolicy).sourceTierScores).A = 101;

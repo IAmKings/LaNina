@@ -6,6 +6,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
 
 import type { IndicatorSeriesModel } from "../domain/page-models";
+import { formatShanghaiDayMonth } from "./shanghai-time";
 import {
   chartPointDataItem,
   chartableIndicatorPoints,
@@ -88,9 +89,5 @@ function formatChartDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
 
-  return new Intl.DateTimeFormat("zh-CN", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "Asia/Shanghai",
-  }).format(date);
+  return formatShanghaiDayMonth(date);
 }

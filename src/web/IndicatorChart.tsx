@@ -4,8 +4,13 @@ import type { EChartsOption } from "echarts";
 
 import type { IndicatorSeriesModel } from "../domain/page-models";
 import { chartMarkerLegend, chartableIndicatorPoints } from "./indicator-markers";
+import { observeViewportEntry } from "./viewport-entry";
 
-type ChartState = "loading" | "ready" | "error";
+/**
+ * "pending" marks a chart whose container has not yet approached the viewport, so the ECharts
+ * chunk has not even been requested; "loading" marks an in-flight or initializing chart.
+ */
+type ChartState = "pending" | "loading" | "ready" | "error";
 
 interface IndicatorChartProps {
   readonly series: IndicatorSeriesModel;
@@ -14,7 +19,7 @@ interface IndicatorChartProps {
 export function IndicatorChart({ series }: IndicatorChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const summaryId = useId();
-  const [state, setState] = useState<ChartState>("loading");
+  const [state, setState] = useState<ChartState>("pending");
   const hasChartableValue = series.points.some((point) => typeof point.value === "number" && Number.isFinite(point.value));
   const markerLegend = chartMarkerLegend(chartableIndicatorPoints(series));
 
@@ -29,31 +34,43 @@ export function IndicatorChart({ series }: IndicatorChartProps) {
     let resizeObserver: ResizeObserver | undefined;
     let removeWindowResizeListener: (() => void) | undefined;
 
-    setState("loading");
-    void loadIndicatorChartRuntime()
-      .then(({ indicatorChartOption, initIndicatorChart }) => {
-        if (cancelled) return;
-        chart = initIndicatorChart(container);
-        chart.setOption(indicatorChartOption(series));
+    setState("pending");
+    const startChartLoad = () => {
+      setState("loading");
+      void loadIndicatorChartRuntime()
+        .then(({ indicatorChartOption, initIndicatorChart }) => {
+          if (cancelled) return;
+          chart = initIndicatorChart(container);
+          chart.setOption(indicatorChartOption(series));
 
-        const resize = () => chart?.resize();
-        if (typeof ResizeObserver === "function") {
-          resizeObserver = new ResizeObserver(resize);
-          resizeObserver.observe(container);
-        } else {
-          window.addEventListener("resize", resize);
-          removeWindowResizeListener = () => window.removeEventListener("resize", resize);
-        }
-        setState("ready");
-      })
-      .catch(() => {
-        chart?.dispose();
-        chart = undefined;
-        if (!cancelled) setState("error");
-      });
+          const resize = () => chart?.resize();
+          if (typeof ResizeObserver === "function") {
+            resizeObserver = new ResizeObserver(resize);
+            resizeObserver.observe(container);
+          } else {
+            window.addEventListener("resize", resize);
+            removeWindowResizeListener = () => window.removeEventListener("resize", resize);
+          }
+          setState("ready");
+        })
+        .catch(() => {
+          chart?.dispose();
+          chart = undefined;
+          if (!cancelled) setState("error");
+        });
+    };
+
+    // ECharts is the heaviest lazy chunk on the page and every detail page already renders a full
+    // accessible data table, so the chart runtime is only requested once the container approaches
+    // the viewport. Environments without IntersectionObserver load immediately (defensive).
+    const viewportEntry = observeViewportEntry(container, () => {
+      if (cancelled) return;
+      startChartLoad();
+    });
 
     return () => {
       cancelled = true;
+      viewportEntry.disconnect();
       resizeObserver?.disconnect();
       removeWindowResizeListener?.();
       chart?.dispose();
@@ -78,6 +95,7 @@ export function IndicatorChart({ series }: IndicatorChartProps) {
           ))}
         </p>
       )}
+      {state === "pending" ? <p className="indicator-chart-message" role="status">图表进入视野后加载；下方数据表始终可用。</p> : null}
       {state === "loading" ? <p className="indicator-chart-message" role="status">图表正在加载；可先阅读下方数据表。</p> : null}
       {state === "error" ? <p className="indicator-chart-message is-error" role="status">图表暂时无法显示，请使用下方可访问的数据表。</p> : null}
       <div

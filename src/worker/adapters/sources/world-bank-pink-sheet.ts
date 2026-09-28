@@ -1,16 +1,11 @@
-import type {
-  CollectContext,
-  CollectResult,
-  ObservationInput,
-  SourceAdapter,
-} from "../../../domain/ingestion";
+import type { ObservationInput, SourceAdapter } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
 import {
   parseWorksheetRows,
   parseSharedStrings,
   readXlsxEntities,
 } from "./minimal-xlsx";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { createHttpSourceAdapter } from "./adapter-base";
 
 export const WORLD_BANK_SOURCE_ID = "world_bank_commodity_prices";
 export const WORLD_BANK_ADAPTER_KEY = "world-bank-pink-sheet-monthly-v1";
@@ -37,48 +32,29 @@ interface MonthlyRubberValue {
   readonly tsr20: number;
 }
 
-export const worldBankPinkSheetAdapter: SourceAdapter = {
+export const worldBankPinkSheetAdapter: SourceAdapter = createHttpSourceAdapter<Uint8Array>({
   key: WORLD_BANK_ADAPTER_KEY,
-
-  async collect(context: CollectContext): Promise<CollectResult> {
+  sourceKey: "World Bank",
+  maxBytes: MAX_RESPONSE_BYTES,
+  accept:
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream",
+  // 实测工作簿只有 Last-Modified、无 ETag；条件请求仅用 If-Modified-Since。
+  conditional: "last-modified-only",
+  redirect: "follow",
+  mediaType: {
+    kind: "excludes",
+    value: "text/html",
+    driftMessage: "World Bank 工作簿地址返回 HTML（可能整页移动）",
+  },
+  body: { kind: "bytes" },
+  networkError: () => new SourceCollectionError("NETWORK", "无法连接 World Bank", { retryable: true }),
+  prepare(context) {
     if (context.sourceUrl !== WORLD_BANK_SOURCE_URL) {
       throw new SourceCollectionError("VALIDATION", "World Bank 来源地址不在允许列表");
     }
-
-    // Spike 实测：工作簿只有 Last-Modified、无 ETag；条件请求用 If-Modified-Since。
-    const headers = new Headers({ Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream" });
-    if (context.previousLastModified !== null) headers.set("If-Modified-Since", context.previousLastModified);
-
-    let response: Response;
-    try {
-      response = await context.fetch(context.sourceUrl, { headers, redirect: "follow" });
-    } catch {
-      throw new SourceCollectionError("NETWORK", "无法连接 World Bank", { retryable: true });
-    }
-
-    const lastModified = response.headers.get("last-modified");
-    const contentType = response.headers.get("content-type");
-    if (response.status === 304) {
-      return unchangedResult(context, {
-        etag: null,
-        lastModified: lastModified ?? context.previousLastModified,
-        contentType,
-        contentHash: context.previousContentHash,
-      });
-    }
-    if (!response.ok) throw errorForResponse(response);
-    if (contentType !== null && contentType.includes("text/html")) {
-      throw new SourceCollectionError("SCHEMA_DRIFT", "World Bank 工作簿地址返回 HTML（可能整页移动）");
-    }
-
-    const rawBody = await readBodyWithinLimit(response, MAX_RESPONSE_BYTES);
-    const contentHash = await sha256Hex(rawBody);
-    if (contentHash === context.previousContentHash) {
-      return unchangedResult(context, {
-        etag: null, lastModified, contentType, contentHash,
-      });
-    }
-
+    return { url: context.sourceUrl };
+  },
+  async parse(rawBody, context) {
     let parsed: readonly MonthlyRubberValue[];
     try {
       parsed = await parsePinkSheetWorkbook(rawBody);
@@ -87,43 +63,16 @@ export const worldBankPinkSheetAdapter: SourceAdapter = {
       throw new SourceCollectionError("SCHEMA_DRIFT", "World Bank 工作簿结构不可解析");
     }
     const values = parsed.slice(-MONTHLY_WINDOW);
-    const observations = toObservationInputs(values, context.fetchedAt);
-
     return {
-      sourceId: context.sourceId,
-      fetchedAt: context.fetchedAt,
-      sourcePublishedAt: null,
-      etag: null,
-      lastModified,
-      contentType,
-      contentHash,
-      rawBody,
-      observations,
+      observations: toObservationInputs(values, context.fetchedAt),
       warnings: [
         "SOURCE_PUBLISHED_AT_UNKNOWN",
         RIGHTS_REVIEW_WARNING,
         ...(parsed.length > values.length ? ["AUTOMATED_WINDOW_TRUNCATED"] : []),
       ],
-      status: "changed",
     };
   },
-};
-
-function unchangedResult(
-  context: CollectContext,
-  metadata: Pick<CollectResult, "etag" | "lastModified" | "contentType" | "contentHash">,
-): CollectResult {
-  return {
-    sourceId: context.sourceId,
-    fetchedAt: context.fetchedAt,
-    sourcePublishedAt: null,
-    ...metadata,
-    rawBody: null,
-    observations: [],
-    warnings: [],
-    status: "unchanged",
-  };
-}
+});
 
 /** 从工作簿字节解析 Monthly Prices 表的两个橡胶月度序列（测试可直接调用）。 */
 export async function parsePinkSheetWorkbook(

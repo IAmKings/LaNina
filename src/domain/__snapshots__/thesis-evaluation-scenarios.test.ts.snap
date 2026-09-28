@@ -1,5 +1,197 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`ENSO golden threshold boundary (D3 signed numeric rule) > judges the golden scenarios through the production seed at the signed +0.5°C boundary > ENSO golden threshold boundary 1`] = `
+{
+  "coverage_gap": {
+    "direction": "neutral",
+    "marketScope": "RONI/ONI 与区域风险窗口",
+    "matchedDirections": [],
+    "methodologyVersion": "evaluation-v1-draft",
+    "policyVersion": "direction-v1",
+    "reasons": [
+      "没有具备方向性证据的已审核规则命中，保留 seed 的有范围默认方向但标记为不可用",
+    ],
+    "regionDefinitionVersion": "global-v1",
+    "ruleHits": [],
+    "ruleRejections": [
+      {
+        "code": "NOT_MATCHED",
+        "reason": "规则 enso-invalidate 未匹配当前证据",
+        "ruleId": "enso-invalidate",
+      },
+      {
+        "code": "NOT_MATCHED",
+        "reason": "规则 enso-numeric-support 未匹配当前证据",
+        "ruleId": "enso-numeric-support",
+      },
+      {
+        "code": "NOT_MATCHED",
+        "reason": "规则 enso-refute 未匹配当前证据",
+        "ruleId": "enso-refute",
+      },
+      {
+        "code": "NOT_MATCHED",
+        "reason": "规则 enso-relief 未匹配当前证据",
+        "ruleId": "enso-relief",
+      },
+      {
+        "code": "NOT_MATCHED",
+        "reason": "规则 enso-support 未匹配当前证据",
+        "ruleId": "enso-support",
+      },
+    ],
+    "status": "unavailable",
+    "target": "RONI/ONI 强度及其区域风险窗口",
+    "thesisId": "ENSO-CORE-01",
+    "timeHorizon": "未来 1–3 个月",
+  },
+  "invalidation": {
+    "direction": "bullish",
+    "marketScope": "RONI/ONI 与区域风险窗口",
+    "matchedDirections": [
+      "bullish",
+    ],
+    "methodologyVersion": "evaluation-v1-draft",
+    "policyVersion": "direction-v1",
+    "reasons": [],
+    "regionDefinitionVersion": "global-v1",
+    "ruleHits": [
+      {
+        "evidenceIds": [
+          "enso-core-01-invalidation",
+        ],
+        "reason": "规则 enso-numeric-support 以 supports stance 命中，并由审核策略显式映射为 bullish",
+        "ruleId": "enso-numeric-support",
+      },
+      {
+        "evidenceIds": [
+          "enso-core-01-invalidation",
+        ],
+        "reason": "规则 enso-support 以 supports stance 命中，并由审核策略显式映射为 bullish",
+        "ruleId": "enso-support",
+      },
+    ],
+    "ruleRejections": [
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-invalidate 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-invalidate",
+      },
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-refute 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-refute",
+      },
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-relief 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-relief",
+      },
+    ],
+    "status": "available",
+    "target": "RONI/ONI 强度及其区域风险窗口",
+    "thesisId": "ENSO-CORE-01",
+    "timeHorizon": "未来 1–3 个月",
+  },
+  "refute": {
+    "direction": "bullish",
+    "marketScope": "RONI/ONI 与区域风险窗口",
+    "matchedDirections": [
+      "bullish",
+    ],
+    "methodologyVersion": "evaluation-v1-draft",
+    "policyVersion": "direction-v1",
+    "reasons": [],
+    "regionDefinitionVersion": "global-v1",
+    "ruleHits": [
+      {
+        "evidenceIds": [
+          "enso-core-01-refute",
+        ],
+        "reason": "规则 enso-numeric-support 以 supports stance 命中，并由审核策略显式映射为 bullish",
+        "ruleId": "enso-numeric-support",
+      },
+      {
+        "evidenceIds": [
+          "enso-core-01-refute",
+        ],
+        "reason": "规则 enso-support 以 supports stance 命中，并由审核策略显式映射为 bullish",
+        "ruleId": "enso-support",
+      },
+    ],
+    "ruleRejections": [
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-invalidate 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-invalidate",
+      },
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-refute 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-refute",
+      },
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-relief 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-relief",
+      },
+    ],
+    "status": "available",
+    "target": "RONI/ONI 强度及其区域风险窗口",
+    "thesisId": "ENSO-CORE-01",
+    "timeHorizon": "未来 1–3 个月",
+  },
+  "support": {
+    "direction": "bullish",
+    "marketScope": "RONI/ONI 与区域风险窗口",
+    "matchedDirections": [
+      "bullish",
+    ],
+    "methodologyVersion": "evaluation-v1-draft",
+    "policyVersion": "direction-v1",
+    "reasons": [],
+    "regionDefinitionVersion": "global-v1",
+    "ruleHits": [
+      {
+        "evidenceIds": [
+          "enso-core-01-support",
+        ],
+        "reason": "规则 enso-numeric-support 以 supports stance 命中，并由审核策略显式映射为 bullish",
+        "ruleId": "enso-numeric-support",
+      },
+      {
+        "evidenceIds": [
+          "enso-core-01-support",
+        ],
+        "reason": "规则 enso-support 以 supports stance 命中，并由审核策略显式映射为 bullish",
+        "ruleId": "enso-support",
+      },
+    ],
+    "ruleRejections": [
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-invalidate 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-invalidate",
+      },
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-refute 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-refute",
+      },
+      {
+        "code": "CONTEXT_ONLY",
+        "reason": "规则 enso-relief 未命中其 refutes 语义所需的正权重非 control 证据，不能产生市场方向",
+        "ruleId": "enso-relief",
+      },
+    ],
+    "status": "available",
+    "target": "RONI/ONI 强度及其区域风险窗口",
+    "thesisId": "ENSO-CORE-01",
+    "timeHorizon": "未来 1–3 个月",
+  },
+}
+`;
+
 exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions and emits semantic threshold/revision changes > revision cutoff and semantic delta explanation 1`] = `
 {
   "atCutoff": {
@@ -8,8 +200,8 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
         "appliedCaps": [],
         "components": {
           "agreement": 100,
-          "coverage": 100,
-          "freshness": 100,
+          "coverage": 50,
+          "freshness": 50,
           "sourceQuality": 100,
         },
         "explanations": {
@@ -23,12 +215,15 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
             "supportWeight": 60,
           },
           "coverage": {
-            "missingLayers": [],
+            "missingLayers": [
+              "market",
+            ],
             "presentLayers": [
               "weather",
             ],
             "requiredLayers": [
               "weather",
+              "market",
             ],
             "staleLayers": [],
           },
@@ -40,7 +235,9 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
               "revision-weather",
             ],
             "lateSelectorIds": [],
-            "missingSelectorIds": [],
+            "missingSelectorIds": [
+              "revision-market",
+            ],
             "staleSelectorIds": [],
           },
           "sourceQuality": {
@@ -54,7 +251,7 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
             },
           },
         },
-        "finalScore": 100,
+        "finalScore": 73,
         "policyVersion": "rubber-th-01-test-confidence-v1",
         "reasons": [
           "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -63,7 +260,7 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
         ],
         "roundingRule": "round_half_up_after_weighted_sum",
         "status": "available",
-        "weightedScore": 100,
+        "weightedScore": 73,
       },
       "cutoff": "2026-09-08T12:00:00.000Z",
       "direction": {
@@ -495,7 +692,7 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
       {
         "after": {
           "confidence": {
-            "score": 100,
+            "score": 73,
             "status": "available",
           },
           "direction": {
@@ -519,7 +716,7 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
         "beforeCutoff": "2026-09-08T11:00:00.000Z",
         "changeClass": "thesis",
         "changeType": "thesis",
-        "idempotencyKey": "material-change-v1:sha256:5587eef187b49989a1a23cf0ad4e26d9379e2db3eb8c6fa54dacbf72c85239bc",
+        "idempotencyKey": "material-change-v1:sha256:5425034b8914f9b9d2b8764aa95ebc74c24b057eb8d04829c6c7ac5d1e391cd4",
         "marketScope": "RU、NR、TSR20、RSS3（测试审核策略）",
         "methodologyVersion": "rubber-th-01-test-reviewed-scenario-v1",
         "publishing": {
@@ -535,13 +732,6 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
             "after": "weather_realized",
             "before": "watch",
             "kind": "stage",
-          },
-          {
-            "absoluteDelta": 27,
-            "after": 100,
-            "before": 73,
-            "kind": "confidence",
-            "threshold": 10,
           },
         ],
       },
@@ -722,7 +912,7 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
         "afterCutoff": "2026-09-08T13:00:00.000Z",
         "before": {
           "confidence": {
-            "score": 100,
+            "score": 73,
             "status": "available",
           },
           "direction": {
@@ -734,7 +924,7 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
         "beforeCutoff": "2026-09-08T12:00:00.000Z",
         "changeClass": "thesis",
         "changeType": "thesis",
-        "idempotencyKey": "material-change-v1:sha256:e06bdefc79a3e4c2e7b8c5be5a7779cedef9f400c19b651ef943cd2eb28eb1a2",
+        "idempotencyKey": "material-change-v1:sha256:afc11ed836d0f945094fdf7c42fc77e04939524dd3ad8af745bdde357a5649d0",
         "marketScope": "RU、NR、TSR20、RSS3（测试审核策略）",
         "methodologyVersion": "rubber-th-01-test-reviewed-scenario-v1",
         "publishing": {
@@ -750,13 +940,6 @@ exports[`cutoff revision scenario > supersedes only cutoff-eligible revisions an
             "after": "watch",
             "before": "weather_realized",
             "kind": "stage",
-          },
-          {
-            "absoluteDelta": 27,
-            "after": 73,
-            "before": 100,
-            "kind": "confidence",
-            "threshold": 10,
           },
         ],
       },
@@ -1251,7 +1434,9 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
         ],
         "methodologyVersion": "ship-eu-01-test-reviewed-scenario-v1",
         "policyVersion": "ship-eu-01-test-direction-v1",
-        "reasons": [],
+        "reasons": [
+          "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
+        ],
         "regionDefinitionVersion": "ship-eu-01-test-region-v1",
         "ruleHits": [
           {
@@ -1284,7 +1469,7 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
             "ruleId": "eu-weather-attribution",
           },
         ],
-        "status": "available",
+        "status": "unavailable",
         "target": "亚洲至欧洲即期运价、EC 与船期可靠性",
         "thesisId": "SHIP-EU-01",
         "timeHorizon": "未来 1–8 周",
@@ -1610,7 +1795,6 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
       ],
       "cutoff": "2026-09-08T12:00:00.000Z",
       "highestEligibleStage": "watch",
-      "manualConfirmationApplied": false,
       "previousStage": "watch",
       "reasons": [
         {
@@ -1713,8 +1897,8 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
         "appliedCaps": [],
         "components": {
           "agreement": 100,
-          "coverage": 100,
-          "freshness": 100,
+          "coverage": 67,
+          "freshness": 67,
           "sourceQuality": 100,
         },
         "explanations": {
@@ -1729,29 +1913,39 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
             "supportWeight": 60,
           },
           "coverage": {
-            "missingLayers": [],
+            "missingLayers": [
+              "control",
+            ],
             "presentLayers": [
               "weather",
+              "market",
             ],
             "requiredLayers": [
               "weather",
+              "market",
+              "control",
             ],
             "staleLayers": [],
           },
           "freshness": {
             "currentEvidenceIds": [
               "evidence-eu-climate-weather",
+              "evidence-eu-route-market",
             ],
             "freshSelectorIds": [
               "eu-climate-weather",
+              "eu-route-market",
             ],
             "lateSelectorIds": [],
-            "missingSelectorIds": [],
+            "missingSelectorIds": [
+              "eu-red-sea-capacity-demand-control",
+            ],
             "staleSelectorIds": [],
           },
           "sourceQuality": {
             "currentEvidenceIds": [
               "evidence-eu-climate-weather",
+              "evidence-eu-route-market",
             ],
             "tierScores": {
               "A": 100,
@@ -1760,7 +1954,7 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
             },
           },
         },
-        "finalScore": 100,
+        "finalScore": 82,
         "policyVersion": "ship-eu-01-test-confidence-v1",
         "reasons": [
           "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -1769,7 +1963,7 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
         ],
         "roundingRule": "round_half_up_after_weighted_sum",
         "status": "available",
-        "weightedScore": 100,
+        "weightedScore": 82,
       },
       "cutoff": "2026-09-08T12:00:00.000Z",
       "direction": {
@@ -1780,7 +1974,9 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
         ],
         "methodologyVersion": "ship-eu-01-test-reviewed-scenario-v1",
         "policyVersion": "ship-eu-01-test-direction-v1",
-        "reasons": [],
+        "reasons": [
+          "命中方向的规则仅有 selector_present 谓词，数值比较规则尚未上线，方向暂不判定",
+        ],
         "regionDefinitionVersion": "ship-eu-01-test-region-v1",
         "ruleHits": [
           {
@@ -1815,7 +2011,7 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
             "ruleId": "eu-pressure-relief",
           },
         ],
-        "status": "available",
+        "status": "unavailable",
         "target": "亚洲至欧洲即期运价、EC 与船期可靠性",
         "thesisId": "SHIP-EU-01",
         "timeHorizon": "未来 1–8 周",
@@ -2117,7 +2313,6 @@ exports[`reviewed test-only market-impact scenarios > keeps Europe mixed and blo
       ],
       "cutoff": "2026-09-08T12:00:00.000Z",
       "highestEligibleStage": "balance_tightening",
-      "manualConfirmationApplied": false,
       "previousStage": "balance_tightening",
       "reasons": [
         {
@@ -2637,7 +2832,6 @@ exports[`reviewed test-only market-impact scenarios > keeps RUBBER-TH-01 price-o
     ],
     "cutoff": "2026-09-08T12:00:00.000Z",
     "highestEligibleStage": "watch",
-    "manualConfirmationApplied": false,
     "previousStage": "watch",
     "reasons": [
       {
@@ -2784,7 +2978,7 @@ exports[`reviewed test-only market-impact scenarios > keeps RUBBER-TH-01 price-o
 }
 `;
 
-exports[`reviewed test-only market-impact scenarios > preserves Panama restriction and relief facts and changes confidence deterministically > Panama contradiction full explanation 1`] = `
+exports[`reviewed test-only market-impact scenarios > preserves Panama restriction and relief facts and changes direction deterministically > Panama contradiction full explanation 1`] = `
 {
   "after": {
     "evaluation": {
@@ -2798,8 +2992,8 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
         ],
         "components": {
           "agreement": 33,
-          "coverage": 100,
-          "freshness": 100,
+          "coverage": 67,
+          "freshness": 75,
           "sourceQuality": 100,
         },
         "explanations": {
@@ -2816,7 +3010,9 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             "supportWeight": 80,
           },
           "coverage": {
-            "missingLayers": [],
+            "missingLayers": [
+              "market",
+            ],
             "presentLayers": [
               "weather",
               "physical",
@@ -2824,6 +3020,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             "requiredLayers": [
               "weather",
               "physical",
+              "market",
             ],
             "staleLayers": [],
           },
@@ -2839,7 +3036,9 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
               "usec-slot-restriction",
             ],
             "lateSelectorIds": [],
-            "missingSelectorIds": [],
+            "missingSelectorIds": [
+              "usec-route-market",
+            ],
             "staleSelectorIds": [],
           },
           "sourceQuality": {
@@ -2865,7 +3064,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
         ],
         "roundingRule": "round_half_up_after_weighted_sum",
         "status": "available",
-        "weightedScore": 87,
+        "weightedScore": 70,
       },
       "cutoff": "2026-09-08T13:00:00.000Z",
       "direction": {
@@ -3098,8 +3297,8 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
         "appliedCaps": [],
         "components": {
           "agreement": 100,
-          "coverage": 100,
-          "freshness": 67,
+          "coverage": 67,
+          "freshness": 50,
           "sourceQuality": 100,
         },
         "explanations": {
@@ -3114,7 +3313,9 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             "supportWeight": 80,
           },
           "coverage": {
-            "missingLayers": [],
+            "missingLayers": [
+              "market",
+            ],
             "presentLayers": [
               "weather",
               "physical",
@@ -3122,6 +3323,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             "requiredLayers": [
               "weather",
               "physical",
+              "market",
             ],
             "staleLayers": [],
           },
@@ -3137,6 +3339,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             "lateSelectorIds": [],
             "missingSelectorIds": [
               "usec-draft-delay-relief",
+              "usec-route-market",
             ],
             "staleSelectorIds": [],
           },
@@ -3152,7 +3355,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             },
           },
         },
-        "finalScore": 92,
+        "finalScore": 78,
         "policyVersion": "ship-usec-01-test-confidence-v1",
         "reasons": [
           "agreement 使用对称净一致度 |support-refute|/(support+refute)，当前为 100",
@@ -3161,7 +3364,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
         ],
         "roundingRule": "round_half_up_after_weighted_sum",
         "status": "available",
-        "weightedScore": 92,
+        "weightedScore": 78,
       },
       "cutoff": "2026-09-08T12:00:00.000Z",
       "direction": {
@@ -3363,7 +3566,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
         "afterCutoff": "2026-09-08T13:00:00.000Z",
         "before": {
           "confidence": {
-            "score": 92,
+            "score": 78,
             "status": "available",
           },
           "direction": {
@@ -3375,7 +3578,7 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
         "beforeCutoff": "2026-09-08T12:00:00.000Z",
         "changeClass": "thesis",
         "changeType": "thesis",
-        "idempotencyKey": "material-change-v1:sha256:3f68026fbdbbbca15df748c9343c15ab03a1eaf5a75d89d6f647c6dc83ecf188",
+        "idempotencyKey": "material-change-v1:sha256:ac3633deb280edf88ee964f57639c396f9075ba687bac1938b6142ccb833c612",
         "marketScope": "美东即期运价、等待时间与绕航（测试审核策略）",
         "methodologyVersion": "ship-usec-01-test-reviewed-scenario-v1",
         "publishing": {
@@ -3392,13 +3595,6 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
             "before": "bullish",
             "kind": "direction",
           },
-          {
-            "absoluteDelta": 23,
-            "after": 69,
-            "before": 92,
-            "kind": "confidence",
-            "threshold": 10,
-          },
         ],
       },
     ],
@@ -3414,4 +3610,94 @@ exports[`reviewed test-only market-impact scenarios > preserves Panama restricti
     "timeHorizon": "未来 1–8 周",
   },
 }
+`;
+
+exports[`signed threshold backfill boundary (2026-09-27) > declares each strict threshold diff on the production seeds > threshold backfill direction boundary 1`] = `
+[
+  {
+    "atThreshold": {
+      "direction": "neutral",
+      "hits": [],
+      "status": "unavailable",
+    },
+    "beyond": {
+      "direction": "bullish",
+      "hits": [
+        "rubber-numeric-anomaly-support",
+      ],
+      "status": "available",
+    },
+    "ruleId": "rubber-numeric-anomaly-support",
+    "thesisId": "RUBBER-TH-01",
+    "threshold": -25,
+  },
+  {
+    "atThreshold": {
+      "direction": "neutral",
+      "hits": [],
+      "status": "unavailable",
+    },
+    "beyond": {
+      "direction": "bullish",
+      "hits": [
+        "palm-numeric-rain-support",
+      ],
+      "status": "available",
+    },
+    "ruleId": "palm-numeric-rain-support",
+    "thesisId": "PALM-SEA-01",
+    "threshold": -25,
+  },
+  {
+    "atThreshold": {
+      "direction": "neutral",
+      "hits": [],
+      "status": "unavailable",
+    },
+    "beyond": {
+      "direction": "bullish",
+      "hits": [
+        "palm-numeric-stocks-support",
+      ],
+      "status": "available",
+    },
+    "ruleId": "palm-numeric-stocks-support",
+    "thesisId": "PALM-SEA-01",
+    "threshold": -10,
+  },
+  {
+    "atThreshold": {
+      "direction": "neutral",
+      "hits": [],
+      "status": "unavailable",
+    },
+    "beyond": {
+      "direction": "bullish",
+      "hits": [
+        "maize-numeric-mean-support",
+      ],
+      "status": "available",
+    },
+    "ruleId": "maize-numeric-mean-support",
+    "thesisId": "MAIZE-SA-01",
+    "threshold": -15,
+  },
+  {
+    "atThreshold": {
+      "direction": "neutral",
+      "hits": [],
+      "status": "unavailable",
+    },
+    "beyond": {
+      "direction": "bullish",
+      "hits": [
+        "maize-numeric-window-support",
+      ],
+      "status": "available",
+    },
+    "ruleId": "maize-numeric-window-support",
+    "thesisId": "MAIZE-SA-01",
+    "threshold": -25,
+  },
+]
 `;

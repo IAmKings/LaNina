@@ -8,6 +8,8 @@
  * invent a comparison when no brief has ever been published, and is idempotent for an identical
  * retry.
  */
+import { deepFreeze } from "../../domain/internal/freeze";
+
 export const THESIS_CHANGE_REVIEW_DECISIONS = ["approved", "rejected"] as const;
 export type ThesisChangeReviewDecision = (typeof THESIS_CHANGE_REVIEW_DECISIONS)[number];
 
@@ -184,8 +186,4 @@ function canonicalUtc(value: unknown): string | null {
   }
   const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value ? null : value;
-}
-
-function deepFreeze<T>(value: T): T {
-  return Object.freeze(value);
 }

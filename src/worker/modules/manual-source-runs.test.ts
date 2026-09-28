@@ -74,7 +74,8 @@ function input(overrides: Partial<Parameters<ManualSourceRunModule["run"]>[0]> =
     sourceId: target.sourceId,
     reason: "核对 NOAA 更新",
     idempotencyKey: "manual-run-key-0001",
-    actor: { email: "editor@example.test", roles: ["editor"] as const },
+    // 路由层的 administrativeActor 已拒绝无 email claim 的执行者；模块只接收真实身份。
+    actor: "editor@example.test",
     occurredAt: "2026-09-10T01:00:00.000Z",
     operationId: "operation-1",
     ...overrides,

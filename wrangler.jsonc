@@ -1,6 +1,9 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
-	"name": "enso-monitor",
+	// 顶层 name 刻意不与生产脚本同名（生产是 env.production 的 "enso-monitor"）：
+	// vite 插件的部署重定向（.wrangler/deploy/config.json）使裸 `wrangler deploy`
+	// 会按顶层配置发布——改名后误操作只会创建无关的本地脚本，不会覆盖生产。
+	"name": "enso-monitor-local",
 	"main": "./src/worker/index.ts",
 	"compatibility_date": "2026-09-07",
 	"compatibility_flags": [
@@ -30,14 +33,9 @@
 			"bucket_name": "enso-raw-local"
 		}
 	],
-	"triggers": {
-		"crons": [
-			"*/15 * * * *",
-			"17 * * * *",
-			"30 22 * * *",
-			"0 23 * * *"
-		]
-	},
+	// 顶层不设 triggers：账户 cron 免费上限 5 条，staging 占 4 条；裸 `wrangler deploy`
+	// 走顶层配置，若带 crons 会占掉配额。crons 只存在于 env.staging；
+	// 生产在上线切 ENABLE_CRON 时再加回（见 env.production 注释）。
 	"observability": {
 		"enabled": true
 	},
@@ -84,7 +82,7 @@
 				{
 					"binding": "DB",
 					"database_name": "enso-monitor-prod",
-					"database_id": "00000000-0000-0000-0000-000000000002"
+					"database_id": "d11f5015-0581-4a86-b05a-cfcb2d354d8f"
 				}
 			],
 			"r2_buckets": [
@@ -93,14 +91,13 @@
 					"bucket_name": "enso-raw-prod"
 				}
 			],
-			"triggers": {
-				"crons": [
-					"*/15 * * * *",
-					"17 * * * *",
-					"30 22 * * *",
-					"0 23 * * *"
-				]
-			}
+			// 免费版账户 cron 上限 5 条（staging 占 4）：生产的 crons 在 ENABLE_CRON=false 下
+			// 本就空转，故配置中暂不保留；上线切 ENABLE_CRON="true" 时需同时把 crons 加回本块
+			//（*/15 * * * * 采集派发、17 * * * * 抓取、30 22 * * * 评估、0 23 * * * 发布决策，
+			// 与 staging 相同）。workers_dev 显式开启（上线前经 workers.dev 域验证），
+			// preview_urls 关闭（生产不需要版本预览 URL）。
+			"workers_dev": true,
+			"preview_urls": false
 		}
 	}
 }

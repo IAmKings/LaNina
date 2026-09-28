@@ -74,6 +74,30 @@ interface AccessJwk extends JsonWebKey {
 }
 
 /**
+ * 每个 isolate 缓存一份 JWKS：身份提供方极少轮换密钥，而每次验签都外呼会把 IdP 抖动
+ * 放大成全部 admin 路由的 503。`fetchedAt` 是注入时钟的毫秒时间戳；TTL 过期后先尝试刷新，
+ * 刷新失败但存在旧值时按 stale-on-error 继续验签（不更新 fetchedAt，下一个请求会再次尝试
+ * 刷新，IdP 恢复后自动回到新 key）。
+ */
+interface JwksCacheEntry {
+  readonly keys: readonly AccessJwk[];
+  readonly fetchedAt: number;
+}
+
+const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let jwksCache: JwksCacheEntry | null = null;
+let jwksRefreshInFlight: Promise<readonly AccessJwk[]> | null = null;
+
+/**
+ * 测试缝隙：模块级缓存状态无法通过 `AccessJwtDependencies` 注入或清理，跨用例会互相污染。
+ */
+export function __resetJwksCacheForTests(): void {
+  jwksCache = null;
+  jwksRefreshInFlight = null;
+}
+
+/**
  * Decodes deployment configuration without inventing a team domain, audience, or role policy.
  * Missing or malformed values produce a fail-closed configuration error when an admin route opts in.
  */
@@ -111,8 +135,9 @@ export async function authenticateAccessRequest(
 
   const header = decodeJwtHeader(parts[0]);
   const claims = decodeJwtClaims(parts[1]);
-  await verifySignature(parts, header, configuration, dependencies.fetch ?? globalThis.fetch);
-  validateClaims(claims, configuration, dependencies.now ?? (() => new Date()));
+  const now = dependencies.now ?? (() => new Date());
+  await verifySignature(parts, header, configuration, dependencies.fetch ?? globalThis.fetch, now);
+  validateClaims(claims, configuration, now);
 
   return {
     email: claims.email ?? null,
@@ -278,9 +303,10 @@ async function verifySignature(
   header: JwtHeader,
   configuration: AccessJwtConfiguration,
   fetcher: typeof globalThis.fetch,
+  now: () => Date,
 ): Promise<void> {
-  const jwks = await loadJwks(configuration.jwksUrl, fetcher);
-  const jwk = jwks.keys.find((key) => key.kid === header.kid && (key.alg === undefined || key.alg === header.alg));
+  const keys = await loadJwks(configuration.jwksUrl, fetcher, now);
+  const jwk = keys.find((key) => key.kid === header.kid && (key.alg === undefined || key.alg === header.alg));
   if (jwk === undefined) throw new AccessJwtError("AUTH_UNAUTHORIZED");
 
   try {
@@ -306,7 +332,55 @@ async function verifySignature(
   }
 }
 
-async function loadJwks(jwksUrl: string, fetcher: typeof globalThis.fetch): Promise<JsonWebKeySet> {
+/**
+ * Returns the cached key set when it is inside the TTL; otherwise refreshes it. Concurrent
+ * verifications share one in-flight refresh so an IdP outage cannot be amplified into a stampede,
+ * and a failed refresh with stale keys present degrades to stale-on-error instead of failing
+ * every admin route while the identity provider recovers.
+ */
+async function loadJwks(
+  jwksUrl: string,
+  fetcher: typeof globalThis.fetch,
+  now: () => Date,
+): Promise<readonly AccessJwk[]> {
+  const cached = jwksCache;
+  if (cached !== null && now().getTime() - cached.fetchedAt < JWKS_CACHE_TTL_MS) return cached.keys;
+
+  if (jwksRefreshInFlight === null) {
+    jwksRefreshInFlight = refreshJwks(jwksUrl, fetcher, now).finally(() => {
+      jwksRefreshInFlight = null;
+    });
+  }
+  return jwksRefreshInFlight;
+}
+
+async function refreshJwks(
+  jwksUrl: string,
+  fetcher: typeof globalThis.fetch,
+  now: () => Date,
+): Promise<readonly AccessJwk[]> {
+  try {
+    const keys = await fetchJwksKeys(jwksUrl, fetcher);
+    jwksCache = { keys, fetchedAt: now().getTime() };
+    return keys;
+  } catch {
+    const stale = jwksCache;
+    if (stale === null) throw new AccessJwtError("AUTH_IDENTITY_PROVIDER");
+    // 旧 key 在 IdP 轮换前通常仍然有效，按 stale-on-error 继续验签；fetchedAt 不更新，
+    // 后续请求会重试刷新。日志只含稳定字段，不含上游异常值或任何令牌材料。
+    console.warn(JSON.stringify({
+      handler: "access-auth",
+      errorCode: "JWKS_REFRESH_FAILED",
+      outcome: "stale-verification",
+    }));
+    return stale.keys;
+  }
+}
+
+async function fetchJwksKeys(
+  jwksUrl: string,
+  fetcher: typeof globalThis.fetch,
+): Promise<readonly AccessJwk[]> {
   try {
     const response = await fetcher(jwksUrl, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error("JWKS request failed");
@@ -319,7 +393,7 @@ async function loadJwks(jwksUrl: string, fetcher: typeof globalThis.fetch): Prom
     ) {
       throw new Error("JWKS payload invalid");
     }
-    return parsed as JsonWebKeySet;
+    return (parsed as JsonWebKeySet).keys;
   } catch {
     throw new AccessJwtError("AUTH_IDENTITY_PROVIDER");
   }

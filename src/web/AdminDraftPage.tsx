@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { ApiEnvelope } from "../domain/contracts";
 import type { ThesisPublicationAction } from "../domain/thesis-publication";
 import type { AdminDraftPageModel, PageLoadState } from "../domain/page-models";
+import { isAbort } from "./is-abort";
 import {
   canSubmitLifecycle,
   draftComparisonRows,
@@ -40,7 +41,7 @@ export function AdminDraftPage({ thesisId }: { thesisId: string }) {
         setState({ status: "ready", data: body.data });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbort(error, controller.signal)) return;
         setState({ status: "error", message: "后台草稿审核暂时无法加载。" });
       });
 

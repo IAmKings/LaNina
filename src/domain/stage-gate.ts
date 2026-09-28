@@ -5,7 +5,6 @@ import type {
   EvidenceSelectionResult,
   SelectedEvidence,
   StageGateCheck,
-  StageGateManualConfirmation,
   StageGateReason,
   StageGateResult,
 } from "./evaluation";
@@ -16,10 +15,12 @@ import type {
 } from "./thesis-seeds";
 import { selectEvidence } from "./evidence-selector";
 import { evaluateRulePredicate } from "./rule-predicate";
+import { compareText, sortedLayers } from "./internal/compare";
+import { deepFreeze } from "./internal/freeze";
+import { parseCanonicalUtc } from "./internal/time";
 
 export interface StageGateOptions {
   readonly previousStage: ThesisStage;
-  readonly manualConfirmation?: StageGateManualConfirmation;
 }
 
 const PRESSURE_STAGES = [
@@ -36,11 +37,11 @@ export function evaluateStageGates(
 ): StageGateResult {
   const invalidOptionsReason = validateOptions(options);
   if (invalidOptionsReason !== null) {
-    return result(seed, selection, "watch", "watch", "watch", "invalid", false, [], [invalidOptionsReason]);
+    return result(seed, selection, "watch", "watch", "watch", "invalid", [], [invalidOptionsReason]);
   }
   const invalidReason = validateEvidenceSelection(seed, selection);
   if (invalidReason !== null) {
-    return result(seed, selection, options.previousStage, "watch", "watch", "invalid", false, [], [invalidReason]);
+    return result(seed, selection, options.previousStage, "watch", "watch", "invalid", [], [invalidReason]);
   }
 
   const rulesById = new Map(
@@ -85,39 +86,27 @@ export function evaluateStageGates(
   addPrerequisiteReasons(checks);
   const previousIndex = stageIndex(options.previousStage);
   const eligibleIndex = stageIndex(highestEligibleStage);
-  const manualConfirmation = validManualConfirmation(options.manualConfirmation);
   let stage: ThesisStage = highestEligibleStage;
   let transition: StageGateResult["transition"] = "unchanged";
-  let manualConfirmationApplied = false;
   const transitionReasons: StageGateReason[] = [];
 
   if (eligibleIndex > previousIndex + 1) {
-    if (manualConfirmation !== null) {
-      transition = "manual_forward_skip";
-      manualConfirmationApplied = true;
+    stage = highestEligibleStage === "easing"
+      ? highestPressureStage
+      : THESIS_STAGES[previousIndex + 1] ?? options.previousStage;
+    const stageIsDowngrade = stageIndex(stage) < previousIndex;
+    transition = stageIsDowngrade ? "downgraded" : "blocked";
+    transitionReasons.push(reason(
+      "FORWARD_SKIP_REQUIRES_CONFIRMATION",
+      highestEligibleStage,
+      `从 ${options.previousStage} 到 ${highestEligibleStage} 超过一级；本次只能停留或回到已通过的 ${stage}`,
+    ));
+    if (stageIsDowngrade) {
       transitionReasons.push(reason(
-        "MANUAL_FORWARD_SKIP_CONFIRMED",
-        highestEligibleStage,
-        `由 ${manualConfirmation.confirmedBy} 明确确认跨级：${manualConfirmation.reason}`,
+        "DOWNGRADE",
+        stage,
+        `中间 gate 未通过，阶段从 ${options.previousStage} 跳回 ${stage}`,
       ));
-    } else {
-      stage = highestEligibleStage === "easing"
-        ? highestPressureStage
-        : THESIS_STAGES[previousIndex + 1] ?? options.previousStage;
-      const stageIsDowngrade = stageIndex(stage) < previousIndex;
-      transition = stageIsDowngrade ? "downgraded" : "blocked";
-      transitionReasons.push(reason(
-        "FORWARD_SKIP_REQUIRES_CONFIRMATION",
-        highestEligibleStage,
-        `从 ${options.previousStage} 到 ${highestEligibleStage} 超过一级；本次只能停留或回到已通过的 ${stage}`,
-      ));
-      if (stageIsDowngrade) {
-        transitionReasons.push(reason(
-          "DOWNGRADE",
-          stage,
-          `中间 gate 未通过且缓解跨级未确认，阶段从 ${options.previousStage} 跳回 ${stage}`,
-        ));
-      }
     }
   } else if (eligibleIndex === previousIndex + 1) {
     transition = "promoted";
@@ -141,7 +130,6 @@ export function evaluateStageGates(
     highestEligibleStage,
     stage,
     transition,
-    manualConfirmationApplied,
     checks,
     allReasons,
   );
@@ -435,18 +423,6 @@ function validateOptions(options: StageGateOptions): StageGateReason | null {
   ) {
     return reason("INVALID_SELECTION", null, "阶段计算 options.previousStage 无效");
   }
-  const confirmation = options.manualConfirmation;
-  if (
-    confirmation !== undefined
-    && (
-      typeof confirmation !== "object"
-      || confirmation === null
-      || typeof confirmation.confirmedBy !== "string"
-      || typeof confirmation.reason !== "string"
-    )
-  ) {
-    return reason("INVALID_SELECTION", null, "阶段计算 manualConfirmation 无效");
-  }
   return null;
 }
 
@@ -550,7 +526,6 @@ function result(
   highestEligibleStage: ThesisStage,
   stage: ThesisStage,
   transition: StageGateResult["transition"],
-  manualConfirmationApplied: boolean,
   checks: readonly StageGateCheck[],
   reasons: readonly StageGateReason[],
 ): StageGateResult {
@@ -561,23 +536,11 @@ function result(
     highestEligibleStage,
     stage,
     transition,
-    manualConfirmationApplied,
     checks: [...checks].sort(
       (left, right) => stageIndex(left.targetStage) - stageIndex(right.targetStage),
     ),
     reasons: sortReasons(reasons),
   });
-}
-
-function validManualConfirmation(
-  confirmation: StageGateManualConfirmation | undefined,
-): StageGateManualConfirmation | null {
-  if (
-    confirmation === undefined
-    || confirmation.confirmedBy.trim().length === 0
-    || confirmation.reason.trim().length === 0
-  ) return null;
-  return confirmation;
 }
 
 function reason(
@@ -607,27 +570,6 @@ function sortReasons(reasons: readonly StageGateReason[]): readonly StageGateRea
   );
 }
 
-function sortedLayers(layers: readonly EvidenceLayer[]): readonly EvidenceLayer[] {
-  const order: readonly EvidenceLayer[] = ["forecast", "weather", "physical", "balance", "market", "control"];
-  return [...layers].sort((left, right) => order.indexOf(left) - order.indexOf(right));
-}
-
 function stageIndex(stage: ThesisStage): number {
   return THESIS_STAGES.indexOf(stage);
-}
-
-function parseCanonicalUtc(value: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) || new Date(parsed).toISOString() !== value ? null : parsed;
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

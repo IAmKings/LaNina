@@ -50,7 +50,7 @@ while IFS= read -r f; do
   if [[ "$f" =~ $SELF_SCAN ]]; then continue; fi
   h=$(grep -cI -E "$SECRET_PATTERNS" "$f" 2>/dev/null || true)
   if [[ -n "$h" && "$h" != "0" ]]; then
-    log "❌ 敏感内容：$f（$h 行）"
+    log "❌ 敏感内容：${f}（${h} 行）"
     hits=$((hits + h))
   fi
 done < <(git ls-files)

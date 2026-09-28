@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  __resetJwksCacheForTests,
   accessJwtConfigurationFromEnvironment,
   authenticateAccessRequest,
   hasAtLeastAdminRole,
@@ -9,6 +10,8 @@ import {
 } from "./access-auth";
 
 const NOW = new Date("2026-09-10T00:00:00.000Z");
+// 与实现里的 JWKS_CACHE_TTL_MS 对齐：缓存条目在注入时钟前进超过该值后视为过期。
+const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 const CONFIGURATION: AccessJwtConfiguration = {
   issuer: "https://team.cloudflareaccess.com",
   audience: "enso-admin-audience",
@@ -16,6 +19,9 @@ const CONFIGURATION: AccessJwtConfiguration = {
   emailRoles: { "editor@example.test": ["editor"] },
   groupRoles: { publishers: ["viewer", "publisher"] },
 };
+
+// 模块级 JWKS 缓存跨用例持久存在；每个用例前重置，避免上一个用例的假 key 泄漏进来。
+beforeEach(() => __resetJwksCacheForTests());
 
 describe("Cloudflare Access JWT authentication", () => {
   it("validates a signed assertion and maps only configured email/group roles", async () => {
@@ -102,6 +108,83 @@ describe("Cloudflare Access JWT authentication", () => {
     expect(hasAtLeastAdminRole({ email: "publisher@example.test", roles: ["publisher"] }, "viewer")).toBe(true);
     expect(hasAtLeastAdminRole({ email: "none@example.test", roles: [] }, "viewer")).toBe(false);
     expect(hasAtLeastAdminRole({ email: "editor@example.test", roles: ["editor"] }, "publisher")).toBe(false);
+  });
+});
+
+describe("JWKS module cache", () => {
+  it("fetches the key set once for every verification inside the TTL", async () => {
+    const keyPair = await signingKeyPair();
+    const token = await signedToken(keyPair.privateKey, { email: "editor@example.test" });
+    const fetch = vi.fn(async () => Response.json({ keys: [await publicJwk(keyPair.publicKey)] }));
+    const dependencies = { fetch, now: () => NOW };
+
+    const first = await authenticateAccessRequest(requestWithToken(token), CONFIGURATION, dependencies);
+    const second = await authenticateAccessRequest(requestWithToken(token), CONFIGURATION, dependencies);
+
+    expect(first.email).toBe("editor@example.test");
+    expect(second.email).toBe("editor@example.test");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("continues verification on stale keys when a post-TTL refresh fails", async () => {
+    const keyPair = await signingKeyPair();
+    // 断言的是验签走 stale 缓存而非 JWKS 刷新结果，令牌寿命必须长于 TTL 推进量。
+    const token = await signedToken(keyPair.privateKey, {
+      email: "editor@example.test",
+      exp: seconds(NOW) + 600,
+    });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ keys: [await publicJwk(keyPair.publicKey)] }))
+      .mockRejectedValueOnce(new Error("identity provider outage"));
+    let currentTimeMs = NOW.getTime();
+    const dependencies = { fetch, now: () => new Date(currentTimeMs) };
+
+    const fresh = await authenticateAccessRequest(requestWithToken(token), CONFIGURATION, dependencies);
+    currentTimeMs += JWKS_CACHE_TTL_MS + 1;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const stale = await authenticateAccessRequest(requestWithToken(token), CONFIGURATION, dependencies);
+    const warnCalls = warn.mock.calls;
+    warn.mockRestore();
+
+    expect(fresh.email).toBe("editor@example.test");
+    expect(stale.email).toBe("editor@example.test");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(warnCalls).toHaveLength(1);
+    expect(JSON.parse(warnCalls[0]?.[0] as string)).toMatchObject({
+      handler: "access-auth",
+      errorCode: "JWKS_REFRESH_FAILED",
+      outcome: "stale-verification",
+    });
+  });
+
+  it("fails closed with 503 when the key set has never been fetched and the refresh fails", async () => {
+    const keyPair = await signingKeyPair();
+    const token = await signedToken(keyPair.privateKey, { email: "editor@example.test" });
+
+    await expect(
+      authenticateAccessRequest(requestWithToken(token), CONFIGURATION, {
+        fetch: async () => { throw new Error("identity provider outage"); },
+        now: () => NOW,
+      }),
+    ).rejects.toMatchObject({ code: "AUTH_IDENTITY_PROVIDER", status: 503 });
+  });
+
+  it("coalesces concurrent verifications into a single in-flight JWKS fetch", async () => {
+    const keyPair = await signingKeyPair();
+    const token = await signedToken(keyPair.privateKey, { email: "editor@example.test" });
+    const fetch = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return Response.json({ keys: [await publicJwk(keyPair.publicKey)] });
+    });
+
+    const actors = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        authenticateAccessRequest(requestWithToken(token), CONFIGURATION, { fetch, now: () => NOW })),
+    );
+
+    expect(actors).toHaveLength(5);
+    expect(actors.every((actor) => actor.email === "editor@example.test")).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
 

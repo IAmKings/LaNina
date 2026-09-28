@@ -1,6 +1,7 @@
 import { THESIS_DIRECTIONS, THESIS_STAGES } from "./contracts";
 import type { ThesisDirection, ThesisStage } from "./contracts";
 import { EVIDENCE_LAYERS, EVIDENCE_STANCES } from "./evaluation";
+import { deepFreeze } from "./internal/freeze";
 import type { EvidenceLayer, EvidenceStance } from "./evaluation";
 
 export const THESIS_CATEGORIES = ["climate", "rubber", "agriculture", "shipping"] as const;
@@ -20,6 +21,11 @@ export const EVALUATION_INDICATOR_IDS = [
   "usda_psd_south_africa_corn_exports_1000mt",
   "usda_psd_south_africa_corn_ending_stocks_1000mt",
   "eia_europe_brent_spot_usd_per_bbl_daily",
+  "thai_rain_anomaly_30d_pct",
+  "sea_rain_anomaly_90d_pct",
+  "usda_malaysia_palm_ending_stocks_yoy_pct",
+  "sa_maize_production_vs_5yr_mean_pct",
+  "sa_maize_rain_anomaly_crop_window_pct",
 ] as const;
 
 export type ThesisCategory = (typeof THESIS_CATEGORIES)[number];
@@ -101,6 +107,13 @@ export interface ConfidencePolicy {
   readonly sourceTierScores: Readonly<Record<"A" | "B" | "C", number | null>>;
   readonly missingRequiredLayerCap: number | null;
   readonly coverageGapCap: number | null;
+  /**
+   * D5 一页纸口径的固定置信度上限（仅预测 49 / 必需层全部过期 59 / 未解释冲突 69）。
+   * null 表示策略未声明该 cap，评估端按同一口径值回退（见 direction-confidence）。
+   */
+  readonly forecastOnlyCap: number | null;
+  readonly requiredLayerStaleCap: number | null;
+  readonly unexplainedConflictCap: number | null;
 }
 
 export interface CoverageGap {
@@ -556,6 +569,9 @@ function decodeConfidencePolicy(value: unknown, path: string): ConfidencePolicy 
       "sourceTierScores",
       "missingRequiredLayerCap",
       "coverageGapCap",
+      "forecastOnlyCap",
+      "requiredLayerStaleCap",
+      "unexplainedConflictCap",
     ],
     path,
   );
@@ -574,6 +590,9 @@ function decodeConfidencePolicy(value: unknown, path: string): ConfidencePolicy 
     `${path}.missingRequiredLayerCap`,
   );
   const coverageGapCap = nullableScore(item.coverageGapCap, `${path}.coverageGapCap`);
+  const forecastOnlyCap = nullableScore(item.forecastOnlyCap, `${path}.forecastOnlyCap`);
+  const requiredLayerStaleCap = nullableScore(item.requiredLayerStaleCap, `${path}.requiredLayerStaleCap`);
+  const unexplainedConflictCap = nullableScore(item.unexplainedConflictCap, `${path}.unexplainedConflictCap`);
   if (
     reviewStatus === "pending"
     && (
@@ -581,6 +600,9 @@ function decodeConfidencePolicy(value: unknown, path: string): ConfidencePolicy 
       || Object.values(decodedTierScores).some((score) => score !== null)
       || missingRequiredLayerCap !== null
       || coverageGapCap !== null
+      || forecastOnlyCap !== null
+      || requiredLayerStaleCap !== null
+      || unexplainedConflictCap !== null
     )
   ) {
     fail(path, "pending confidence policy must not claim reviewed scores or additional caps");
@@ -599,6 +621,9 @@ function decodeConfidencePolicy(value: unknown, path: string): ConfidencePolicy 
     sourceTierScores: decodedTierScores,
     missingRequiredLayerCap,
     coverageGapCap,
+    forecastOnlyCap,
+    requiredLayerStaleCap,
+    unexplainedConflictCap,
   };
 }
 
@@ -727,6 +752,24 @@ export function decodeThesisSeed(value: unknown): ThesisSeed {
     }
   }
 
+  // M6 吸收态护栏（通用规则，不针对具体种子）：easing 是终端缓解态，一旦可激活就会被持续
+  // 保持。若 easing 所需证据弱于天气兑现（缺少 weather_realized 必需层中的任一层），thesis
+  // 可以在天气兑现链条缺证时仍进入/停留在 easing。因此可激活的 easing gate 的必需证据层
+  // 必须覆盖 weather_realized gate 的必需证据层；pending easing 不可激活，不受此约束。
+  const weatherRealizedGate = stageGates.find(({ targetStage }) => targetStage === "weather_realized");
+  const easingGate = stageGates.find(({ targetStage }) => targetStage === "easing");
+  if (easingGate?.reviewStatus === "approved" && weatherRealizedGate !== undefined) {
+    const uncoveredLayers = weatherRealizedGate.requiredLayers.filter(
+      (layer) => !easingGate.requiredLayers.includes(layer),
+    );
+    if (uncoveredLayers.length > 0) {
+      fail(
+        "seed.stageGates.easing.requiredLayers",
+        `easing gate 的必需证据层必须覆盖 weather_realized gate 的必需证据层，缺失 ${uncoveredLayers.join("、")}`,
+      );
+    }
+  }
+
   const readiness = exactRecord(
     item.readiness,
     ["reviewStatus", "productionEvaluation", "publication", "marketEvidenceReady", "blockingGapIds"],
@@ -835,12 +878,6 @@ export function decodeThesisSeeds(value: unknown): readonly ThesisSeed[] {
   return deepFreeze(seeds);
 }
 
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
-}
-
 // The decoder owns the trust boundary. Exported constants are decoded copies, not the mutable input.
 export const PENDING_REVIEW = { reviewStatus: "pending", active: false } as const;
 
@@ -871,6 +908,29 @@ export function approvedRule(
   return {
     id, label, reviewStatus: "approved", active: true,
     predicate: { kind: "selector_present", selectorIds: [...selectorIds], minimumMatches: 1 },
+  };
+}
+
+/**
+ * D3 数值规则签字（2026-09-26，threshold-worksheet §2.1/§2.7）：数值比较规则 approved/active。
+ * id 命名约定 `<前缀>-numeric-<后缀>`，方向仍由既有 id 后缀机制推断（approvedDirectionPolicy）；
+ * 与既有 selector_present 规则「组合而非替换」——存在性条件与阶段门保留，数值规则作为方向条件新增。
+ * 阈值与单位是已签字研究数据（单位必须与适配器输出逐字一致，不一致时不命中 fail-closed）。
+ */
+export function approvedNumericRule(
+  id: string,
+  label: string,
+  selectorId: string,
+  operator: Extract<RulePredicate, { kind: "numeric_compare" }>["operator"],
+  threshold: number,
+  unit: string,
+): RuleDescriptor {
+  return {
+    id,
+    label,
+    reviewStatus: "approved",
+    active: true,
+    predicate: { kind: "numeric_compare", selectorId, operator, threshold, unit },
   };
 }
 
@@ -964,7 +1024,10 @@ export function approvedDirectionPolicy(ruleIds: readonly string[]): DirectionPo
   };
 }
 
-/** D5 签字：置信度策略 approved/active，上限沿用一页纸口径（仅预测 49 / 必需层过期 59 / 覆盖缺口 69）。 */
+/**
+ * D5 签字：置信度策略 approved/active，上限沿用一页纸口径
+ * （仅预测 49 / 必需层全部过期 59 / 未解释冲突 69，另有缺失必需层 49 与覆盖缺口 69）。
+ */
 export const APPROVED_CONFIDENCE_POLICY: ConfidencePolicy = {
   version: "confidence-v1",
   reviewStatus: "approved",
@@ -973,6 +1036,9 @@ export const APPROVED_CONFIDENCE_POLICY: ConfidencePolicy = {
   sourceTierScores: { A: 100, B: 85, C: 70 },
   missingRequiredLayerCap: 49,
   coverageGapCap: 69,
+  forecastOnlyCap: 49,
+  requiredLayerStaleCap: 59,
+  unexplainedConflictCap: 69,
 };
 
 export function pendingDirectionPolicy(ruleIds: readonly string[]): DirectionPolicy {
@@ -990,6 +1056,9 @@ export const PENDING_CONFIDENCE_POLICY: ConfidencePolicy = {
   sourceTierScores: { A: null, B: null, C: null },
   missingRequiredLayerCap: null,
   coverageGapCap: null,
+  forecastOnlyCap: null,
+  requiredLayerStaleCap: null,
+  unexplainedConflictCap: null,
 };
 
 export const EMPTY_PENDING_THRESHOLDS = {

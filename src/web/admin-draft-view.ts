@@ -1,7 +1,8 @@
 import type { AdminDraftPageModel, AdminDraftReviewVersionModel } from "../domain/page-models";
 import type { ThesisPublicationAction } from "../domain/thesis-publication";
 
-import { directionLabel, formatShanghaiTime, stageLabel } from "./overview-view";
+import { directionLabel, stageLabel } from "./overview-view";
+import { formatShanghaiTime } from "./shanghai-time";
 
 export interface DraftComparisonRow {
   readonly field: string;

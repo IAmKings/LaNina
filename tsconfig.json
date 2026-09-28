@@ -23,5 +23,8 @@
     "vitest.config.ts",
     "vitest.live.config.ts",
     "eslint.config.js"
+  ],
+  "exclude": [
+    "src/web"
   ]
 }

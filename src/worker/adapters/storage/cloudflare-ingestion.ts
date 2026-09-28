@@ -10,8 +10,23 @@ import type {
   SourceErrorCode,
 } from "../../../domain/ingestion";
 import { SOURCE_ERROR_CODES, SourceCollectionError } from "../../../domain/ingestion";
-import { calculateSourceHealth } from "../../ingestion/source-health";
+import { calculateSourceHealth, lastRunIsPartialExpression } from "../../ingestion/source-health";
 import { parseCanonicalUtc } from "../../ingestion/time";
+import { reportStorageFailure } from "./storage-logging";
+
+/**
+ * 查询计划回归（cloudflare-read-models-query-plan.test.mjs）引用该固定查询串，
+ * 防止后续改写悄悄丢掉 idx_source_runs_source_status_finished 的索引访问。
+ */
+export const SOURCE_CURSOR_QUERY = `SELECT etag, last_modified, content_hash
+     FROM source_runs
+    WHERE source_id = ?
+      AND status IN ('success', 'unchanged')
+    ORDER BY finished_at DESC, started_at DESC
+    LIMIT 1`;
+
+/** 首采租约占位行的安全文案：只在崩溃且未接管时可见，完成/接管即被覆写。 */
+const FIRST_RUN_LEASE_MESSAGE = "采集运行占用中，等待完成或接管";
 
 interface SourceRunRow {
   id: string;
@@ -33,6 +48,7 @@ interface SourceFailureRow {
   stale_after_minutes: number;
   consecutive_failures: number;
   last_error_code: string | null;
+  last_run_is_partial: number;
 }
 
 interface CursorRow {
@@ -58,7 +74,6 @@ interface ObservationRow {
 interface PlannedObservation {
   input: ObservationInput;
   id: string;
-  revision: number;
   supersedesId: string | null;
 }
 
@@ -81,7 +96,8 @@ export class D1IngestionRepository implements IngestionRepository {
         .bind(sourceId, scheduledAt)
         .first<SourceRunRow>();
       return row === null ? null : toPersistedRun(row);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("ingestion.findRun", error);
       throw databaseError();
     }
   }
@@ -89,14 +105,7 @@ export class D1IngestionRepository implements IngestionRepository {
   async findSourceCursor(sourceId: string): Promise<SourceCursor> {
     try {
       const row = await this.database
-        .prepare(
-          `SELECT etag, last_modified, content_hash
-             FROM source_runs
-            WHERE source_id = ?
-              AND status IN ('success', 'unchanged')
-            ORDER BY finished_at DESC, started_at DESC
-            LIMIT 1`,
-        )
+        .prepare(SOURCE_CURSOR_QUERY)
         .bind(sourceId)
         .first<CursorRow>();
       return {
@@ -104,7 +113,8 @@ export class D1IngestionRepository implements IngestionRepository {
         lastModified: row?.last_modified ?? null,
         contentHash: row?.content_hash ?? null,
       };
-    } catch {
+    } catch (error) {
+      reportStorageFailure("ingestion.findSourceCursor", error);
       throw databaseError();
     }
   }
@@ -139,7 +149,53 @@ export class D1IngestionRepository implements IngestionRepository {
         )
         .run();
       return changedRows(result) === 1;
-    } catch {
+    } catch (error) {
+      reportStorageFailure("ingestion.claimRetryAttempt", error);
+      throw databaseError();
+    }
+  }
+
+  async claimScheduledRun(
+    sourceId: string,
+    scheduledAt: string,
+    runId: string,
+    claimToken: string,
+    claimedAt: string,
+    claimExpiresAt: string,
+  ): Promise<boolean> {
+    try {
+      // 首采租约占位行：status CHECK 只允许既有四态，因此以 'failed' + 租约令牌表达
+      // 「占用中」；完成时由 guarded 更新路径覆写为最终状态并清除令牌，worker 崩溃
+      // 则由 retry_claim_expires_at 过期后的重试路径接管。占位行不触碰 sources 健康
+      // 计数（与 persistFailed 不同），避免未决运行污染连续失败口径。
+      const result = await this.database
+        .prepare(
+          `INSERT INTO source_runs (
+             id, source_id, scheduled_at, started_at, finished_at, status,
+             http_status, etag, last_modified, snapshot_key, content_hash,
+             observations_inserted, observations_revised, error_code, error_message,
+             retry_count, next_retry_at, retry_claim_token, retry_claim_expires_at
+           ) VALUES (?, ?, ?, ?, NULL, 'failed', NULL, NULL, NULL, NULL, NULL,
+                     0, 0, 'VALIDATION', ?, 0, ?, ?, ?)`,
+        )
+        .bind(
+          runId,
+          sourceId,
+          scheduledAt,
+          claimedAt,
+          FIRST_RUN_LEASE_MESSAGE,
+          claimedAt,
+          claimToken,
+          claimExpiresAt,
+        )
+        .run();
+      return changedRows(result) === 1;
+    } catch (error) {
+      // UNIQUE(source_id, scheduled_at) 冲突 = 槽位已被其他 worker 领取：按契约返回
+      // false（不算错误）。数据库真实故障时 findRun 同样失败并向外抛出。
+      const raced = await this.findRun(sourceId, scheduledAt);
+      if (raced !== null) return false;
+      reportStorageFailure("ingestion.claimScheduledRun", error);
       throw databaseError();
     }
   }
@@ -147,7 +203,9 @@ export class D1IngestionRepository implements IngestionRepository {
   async persistCollected(input: PersistCollectedRunInput): Promise<PersistedSourceRun> {
     try {
       const planned = await this.planObservations(input.result.observations);
-      const inserted = planned.filter((observation) => observation.revision === 0).length;
+      // supersedesId === null ⟺ 该 (indicator, observed_at) 此前无任何行 ⟺ revision 0；
+      // 具体 revision 值由写入语句内的子查询在执行时求值，计划期不再携带。
+      const inserted = planned.filter((observation) => observation.supersedesId === null).length;
       const revised = planned.length - inserted;
       const status = input.result.status === "changed" ? "success" : input.result.status;
       const previousHealth =
@@ -203,17 +261,22 @@ export class D1IngestionRepository implements IngestionRepository {
         input.expectedRetryCount === null
           ? this.failedSourceStatement(input, false)
           : this.failedSourceStatement(input, true);
-      const results = await this.database.batch([
-        runStatement,
-        sourceStatement,
-      ]);
-      if (input.expectedRetryCount !== null && changedRows(results[0]) === 0) {
+      // 重试路径把来源健康语句放在 run 语句之前：failRunStatement 会清掉 retry_claim_token，
+      // 之后任何基于「仍持有 claim token」的前置状态检查都不再成立。source_runs 与 sources
+      // 相互独立，batch 原子性下先写来源健康与先写 run 等价。
+      const statements = input.expectedRetryCount === null
+        ? [runStatement, sourceStatement]
+        : [sourceStatement, runStatement];
+      const runIndex = input.expectedRetryCount === null ? 0 : 1;
+      const results = await this.database.batch(statements);
+      if (input.expectedRetryCount !== null && changedRows(results[runIndex]) === 0) {
         const raced = await this.findRun(input.sourceId, input.scheduledAt);
         if (raced !== null) return raced;
         throw databaseError();
       }
       return failedRun(input);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("ingestion.persistFailed", error);
       const existing = await this.findRun(input.sourceId, input.scheduledAt);
       if (existing !== null) return existing;
       throw databaseError();
@@ -297,16 +360,28 @@ export class D1IngestionRepository implements IngestionRepository {
 
   private failedSourceStatement(
     input: PersistFailedRunInput,
-    guardPriorStatement: boolean,
+    guardRetryOwnership: boolean,
   ): D1PreparedStatement {
+    // 守卫对照重试路径既有模式（recoveryChangeStatement / sourceHealthStatement）：
+    // 显式校验本 worker 仍持有该 run 的 retry claim，替代跨语句语义不可靠的 changes()。
+    const ownership = guardRetryOwnership
+      ? ` AND EXISTS (
+            SELECT 1 FROM source_runs owned
+             WHERE owned.id = ? AND owned.status = 'failed'
+               AND owned.retry_count = ? AND owned.retry_claim_token = ?
+          )`
+      : "";
+    const ownershipValues = guardRetryOwnership
+      ? [input.runId, input.retryCount, input.retryClaimToken]
+      : [];
     return this.database
       .prepare(
         `UPDATE sources
             SET consecutive_failures = consecutive_failures + 1,
                 last_error_code = ?, next_due_at = COALESCE(?, next_due_at), updated_at = ?
-          WHERE id = ?${guardPriorStatement ? " AND changes() = 1" : ""}`,
+          WHERE id = ?${ownership}`,
       )
-      .bind(input.errorCode, input.nextDueAt, input.finishedAt, input.sourceId);
+      .bind(input.errorCode, input.nextDueAt, input.finishedAt, input.sourceId, ...ownershipValues);
   }
 
   private async findSourceHealthBefore(sourceId: string, checkedAt: string): Promise<{
@@ -317,9 +392,10 @@ export class D1IngestionRepository implements IngestionRepository {
   } | null> {
     const row = await this.database
       .prepare(
-        `SELECT id, last_success_at, late_after_minutes, stale_after_minutes,
-                consecutive_failures, last_error_code
-           FROM sources WHERE id = ?`,
+        `SELECT sources.id, sources.last_success_at, sources.late_after_minutes,
+                sources.stale_after_minutes, sources.consecutive_failures,
+                sources.last_error_code, ${lastRunIsPartialExpression("sources", false)} AS last_run_is_partial
+           FROM sources WHERE sources.id = ?`,
       )
       .bind(sourceId)
       .first<SourceFailureRow>();
@@ -334,6 +410,7 @@ export class D1IngestionRepository implements IngestionRepository {
         staleAfterMinutes: row.stale_after_minutes,
         consecutiveFailures: row.consecutive_failures,
         lastErrorCode,
+        lastRunIsPartial: row.last_run_is_partial === 1,
       }),
       consecutiveFailures: row.consecutive_failures,
       lastErrorCode,
@@ -437,7 +514,6 @@ export class D1IngestionRepository implements IngestionRepository {
       planned.push({
         input,
         id: this.createId(),
-        revision: latest === null ? 0 : latest.revision + 1,
         supersedesId: latest?.id ?? null,
       });
     });
@@ -455,6 +531,15 @@ export class D1IngestionRepository implements IngestionRepository {
            unit, published_at, fetched_at, revision, supersedes_id, quality,
            source_run_id, citation_url, metadata_json
          )`;
+    // revision 内联子查询在同一条写入语句内求值：batch 原子性下读到的必然是本事务可见的
+    // 最新 revision，消除「JS 先读 latest.revision 再写 +1」的读-改-写竞态——并发批次要么
+    // 排在本批之后自然递增，要么撞 UNIQUE 整批回滚（fail-closed），不再因计划期读数过期
+    // 而回滚。同一批内 (indicator_id, observed_at) 不重复（planObservations 去重），子查询
+    // 不受本批前序语句影响。计划期读取此时只为 dedup（sameObservation）与 supersedes_id 服务。
+    const revisionSubquery = `(
+              SELECT COALESCE(MAX(revision), -1) + 1 FROM observations
+               WHERE indicator_id = ? AND observed_at = ?
+            )`;
     const values: unknown[] = [
         observation.id,
         observation.input.indicatorId,
@@ -465,7 +550,8 @@ export class D1IngestionRepository implements IngestionRepository {
         observation.input.unit,
         observation.input.publishedAt,
         observation.input.fetchedAt,
-        observation.revision,
+        observation.input.indicatorId,
+        observation.input.observedAt,
         observation.supersedesId,
         observation.input.quality,
         run.runId,
@@ -474,13 +560,13 @@ export class D1IngestionRepository implements IngestionRepository {
     ];
     if (run.expectedRetryCount === null) {
       return this.database
-        .prepare(`${columns} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`${columns} SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ${revisionSubquery}, ?, ?, ?, ?, ?`)
         .bind(...values);
     }
     return this.database
       .prepare(
         `${columns}
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ${revisionSubquery}, ?, ?, ?, ?, ?
           WHERE EXISTS (
             SELECT 1 FROM source_runs
              WHERE id = ? AND status = 'failed' AND retry_count = ?
@@ -507,9 +593,17 @@ export class D1IngestionRepository implements IngestionRepository {
         ? []
         : [input.runId, input.retryCount, input.retryClaimToken];
     if (status === "partial") {
+      // D4:B：partial 确实带来了数据（部分观测已落库），刷新 last_success_at 使源进入
+      // degraded 派生态（读取端由「最新完结 run 为 partial」派生），不再长期误报陈旧。
+      // consecutive_failures / last_error_code 保持不动：partial 不清零也不累加失败计数，
+      // 后续失败按既有逻辑照常累计；next_due_at 推进与 D2 租约/重试路径语义不变。
       return this.database
-        .prepare(`UPDATE sources SET next_due_at = COALESCE(?, next_due_at), updated_at = ? WHERE id = ?${ownership}`)
-        .bind(input.nextDueAt, input.finishedAt, input.sourceId, ...ownershipValues);
+        .prepare(
+          `UPDATE sources
+              SET last_success_at = ?, next_due_at = COALESCE(?, next_due_at), updated_at = ?
+            WHERE id = ?${ownership}`,
+        )
+        .bind(input.finishedAt, input.nextDueAt, input.finishedAt, input.sourceId, ...ownershipValues);
     }
     return this.database
       .prepare(
@@ -603,6 +697,11 @@ function validateObservation(input: ObservationInput): void {
   if (input.publishedAt !== null) parseCanonicalUtc(input.publishedAt, "publishedAt");
   if (input.unit.trim() === "" || input.citationUrl.trim() === "") {
     throw new SourceCollectionError("VALIDATION", "观测缺少单位或引用地址");
+  }
+  // 防御纵深：适配器层的类型强转（如 `as number`）可能把 null/undefined 当数值送进来，
+  // 落库会变成 value_num/value_text 双 NULL 的坏行，这里统一 fail-closed。
+  if (input.value === null || input.value === undefined) {
+    throw new SourceCollectionError("VALIDATION", "观测缺少数值");
   }
   if (typeof input.value === "number" && !Number.isFinite(input.value)) {
     throw new SourceCollectionError("VALIDATION", "数值观测必须是有限数");

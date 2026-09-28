@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { ThesisStage } from "./contracts";
 import { shanghaiBriefDate } from "./daily-brief";
 import { evaluateDirectionAndConfidence } from "./direction-confidence";
+import { scaledEpsilonTolerance } from "./internal/compare";
 import type {
   DirectionConfidenceEvaluation,
   EvidenceLayer,
   EvidenceSelectionResult,
   EvaluationEvidenceInput,
+  ScopedDirectionEvaluation,
   StageGateResult,
 } from "./evaluation";
 import { selectEvidence } from "./evidence-selector";
@@ -26,6 +28,10 @@ import {
   type RuleDescriptor,
   type ThesisSeed,
 } from "./thesis-seeds";
+import {
+  THESIS_EVALUATION_GOLDEN_FIXTURES,
+  type GoldenScenario,
+} from "./thesis-evaluation.fixtures";
 import {
   automaticPublicationDisabledResult,
   precedingEvaluationCutoff,
@@ -124,7 +130,7 @@ describe("reviewed test-only market-impact scenarios", () => {
       .toMatchSnapshot("rubber price-only full explanation");
   });
 
-  it("preserves Panama restriction and relief facts and changes confidence deterministically", async () => {
+  it("preserves Panama restriction and relief facts and changes direction deterministically", async () => {
     const seed = panamaScenarioSeed();
     const weather = evidence(seed, "usec-catchment-weather", {
       evidenceId: "panama-weather-support",
@@ -179,8 +185,10 @@ describe("reviewed test-only market-impact scenarios", () => {
         ],
       },
       confidence: {
-        components: { coverage: 100, freshness: 100, sourceQuality: 100, agreement: 33 },
-        weightedScore: 87,
+        // D3（2026-09-26 签字）：coverage/freshness 分母恒为种子全集（weather/physical/market），
+        // relief 兑现后 confidence 由 78 变为 70（未过 conflict cap 前），差值 9 低于阈值 10。
+        components: { coverage: 67, freshness: 75, sourceQuality: 100, agreement: 33 },
+        weightedScore: 70,
         finalScore: 69,
         appliedCaps: [expect.objectContaining({ code: "UNEXPLAINED_CONFLICT", maximum: 69 })],
         explanations: {
@@ -211,9 +219,9 @@ describe("reviewed test-only market-impact scenarios", () => {
       expect.objectContaining({
         changeClass: "thesis",
         changeType: "thesis",
+        // D3 后 confidence 由 78 变为 69，差值 9 低于已审核阈值 10：只剩方向变化触发审核。
         triggers: [
           { kind: "direction", before: "bullish", after: "mixed" },
-          { kind: "confidence", before: 92, after: 69, absoluteDelta: 23, threshold: 10 },
         ],
       }),
     ]);
@@ -276,7 +284,9 @@ describe("reviewed test-only market-impact scenarios", () => {
       target: "亚洲至欧洲即期运价、EC 与船期可靠性",
       marketScope: "SCFI 欧线、EC、船期可靠性；须分离红海/苏伊士、运力与需求",
       timeHorizon: "未来 1–8 周",
-      direction: { status: "available", direction: "mixed", matchedDirections: ["mixed"] },
+      // D1 过渡守卫：命中方向的 eu-weather-attribution / eu-market-change 均为 selector_present，
+      // 方向不判定——保留 seed 默认方向 mixed 但标记 unavailable。
+      direction: { status: "unavailable", direction: "mixed", matchedDirections: ["mixed"] },
     });
 
     const controlCannotSubstitute = evaluateScenario(seed, "watch", BASE_CUTOFF, [
@@ -393,6 +403,84 @@ describe("cutoff revision scenario", () => {
     expect(factChanges(exited, "revision")[0]?.absoluteValueDelta).not.toBe(8);
     expect({ early, atCutoff, entered, later, exited })
       .toMatchSnapshot("revision cutoff and semantic delta explanation");
+  });
+});
+
+describe("ENSO golden threshold boundary (D3 signed numeric rule)", () => {
+  it("judges the golden scenarios through the production seed at the signed +0.5°C boundary", () => {
+    // D3 签字（threshold-worksheet §2.1/§6.5）：ENSO-CORE-01 新增 enso-numeric-support
+    // （RONI ≥ +0.5°C）。黄金场景的数据值恰好覆盖这条边界，本快照逐场景声明落地后的
+    // 方向变化——快照范围只有 ENSO 的方向值、命中规则与理由（R4 声明范围）。
+    const fixture = THESIS_EVALUATION_GOLDEN_FIXTURES.find(({ thesisId }) => thesisId === "ENSO-CORE-01");
+    if (fixture === undefined) throw new TypeError("missing ENSO-CORE-01 golden fixture");
+    const directionFor = (scenario: GoldenScenario): ScopedDirectionEvaluation => {
+      const goldenCase = fixture.cases[scenario];
+      return evaluateScenario(goldenCase.seed, "watch", BASE_CUTOFF, goldenCase.inputs).evaluation.direction;
+    };
+    const support = directionFor("support");
+    const refute = directionFor("refute");
+    const invalidation = directionFor("invalidation");
+    const coverageGap = directionFor("coverage_gap");
+
+    // 支撑场景 RONI=+1.5：数值规则命中，D1 过渡守卫解除 → available 偏多。
+    expect(support).toMatchObject({ status: "available", direction: "bullish" });
+    // 反证场景 RONI 恰为签字阈值 +0.5：≥ 含等 → available 偏多（显式声明的边界快照 diff）。
+    expect(refute).toMatchObject({ status: "available", direction: "bullish" });
+    expect(refute.ruleHits.map(({ ruleId }) => ruleId)).toEqual(["enso-numeric-support", "enso-support"]);
+    // 失效场景 RONI=+0.8 亦越过阈值：数值规则的语义是「事件确立」，与输入侧 stance 无关。
+    expect(invalidation).toMatchObject({ status: "available", direction: "bullish" });
+    // 覆盖缺口场景无证据：无数值规则命中 → 方向不可判（保留默认方向）。
+    expect(coverageGap).toMatchObject({ status: "unavailable", direction: "neutral" });
+
+    expect({ support, refute, invalidation, coverage_gap: coverageGap })
+      .toMatchSnapshot("ENSO golden threshold boundary");
+  });
+});
+
+describe("signed threshold backfill boundary (2026-09-27)", () => {
+  it("declares each strict threshold diff on the production seeds", () => {
+    // 回填签字：五条 support 数值规则都是严格小于。恰好 −25/−10/−15 不命中；
+    // 越过 4×EPSILON 容差才解除 D1 守卫。阶段门仍只引用存在性规则，本快照只记录方向。
+    const cases = [
+      ["RUBBER-TH-01", "rubber-rain-anomaly-30d", "rubber-numeric-anomaly-support", -25],
+      ["PALM-SEA-01", "palm-rain-anomaly-90d", "palm-numeric-rain-support", -25],
+      ["PALM-SEA-01", "palm-ending-stocks-yoy", "palm-numeric-stocks-support", -10],
+      ["MAIZE-SA-01", "maize-production-vs-5yr", "maize-numeric-mean-support", -15],
+      ["MAIZE-SA-01", "maize-rain-anomaly-crop-window", "maize-numeric-window-support", -25],
+    ] as const;
+    const declared = cases.map(([thesisId, selectorId, ruleId, threshold]) => {
+      const seed = INITIAL_THESIS_SEEDS.find(({ id }) => id === thesisId);
+      if (seed === undefined) throw new TypeError(`missing ${thesisId}`);
+      const directionFor = (value: number) =>
+        evaluateScenario(seed, "watch", BASE_CUTOFF, [
+          evidence(seed, selectorId, { value, unit: "%" }),
+        ]).evaluation.direction;
+      const atThreshold = directionFor(threshold);
+      const step = scaledEpsilonTolerance(threshold, threshold);
+      let beyondValue = threshold - step;
+      while (Math.abs(beyondValue - threshold) <= scaledEpsilonTolerance(beyondValue, threshold)) {
+        beyondValue -= step;
+      }
+      const beyond = directionFor(beyondValue);
+      expect(atThreshold).toMatchObject({ status: "unavailable", direction: "neutral" });
+      expect(atThreshold.ruleHits.map(({ ruleId: id }) => id)).not.toContain(ruleId);
+      expect(beyond).toMatchObject({ status: "available", direction: "bullish" });
+      expect(beyond.ruleHits.map(({ ruleId: id }) => id)).toEqual([ruleId]);
+      return {
+        thesisId,
+        ruleId,
+        threshold,
+        atThreshold: { status: atThreshold.status, direction: atThreshold.direction, hits: atThreshold.ruleHits.map(({ ruleId: id }) => id) },
+        beyond: { status: beyond.status, direction: beyond.direction, hits: beyond.ruleHits.map(({ ruleId: id }) => id) },
+      };
+    });
+    const usec = INITIAL_THESIS_SEEDS.find(({ id }) => id === "SHIP-USEC-01");
+    if (usec === undefined) throw new TypeError("missing SHIP-USEC-01");
+    const usecDirection = evaluateScenario(usec, "watch", BASE_CUTOFF, [
+      evidence(usec, "usec-panama-rainfall-proxy", { value: 1, unit: "mm/day" }),
+    ]).evaluation.direction;
+    expect(usecDirection).toMatchObject({ status: "unavailable", direction: "neutral" });
+    expect(declared).toMatchSnapshot("threshold backfill direction boundary");
   });
 });
 
@@ -528,7 +616,8 @@ function panamaScenarioSeed(): ThesisSeed {
     selector("usec-route-market", "eia_europe_brent_spot_usd_per_bbl_daily", "market", "supports", 20),
   ];
   const supportRules = [
-    presentRule("usec-catchment-support", ["usec-catchment-weather"]),
+    // 数值谓词参与方向判定（D1 过渡守卫要求）：catchment 降雨 < -1mm 视为压力证据。
+    numericRule("usec-catchment-support", "usec-catchment-weather", "lt", -1),
     presentRule("usec-slot-pressure", ["usec-slot-restriction"]),
     presentRule("usec-route-market-confirmation", ["usec-route-market"]),
   ];
@@ -547,7 +636,8 @@ function panamaScenarioSeed(): ThesisSeed {
       gate("physical_pressure", ["weather", "physical"], ["usec-slot-pressure"]),
       gate("balance_tightening", ["weather", "physical", "market"], ["usec-route-market-confirmation"]),
       gate("market_confirmed", ["weather", "physical", "market"], ["usec-route-market-confirmation"]),
-      gate("easing", ["physical"], ["usec-easing-confirmed"]),
+      // easing 必须覆盖 weather_realized 的必需层（M6 吸收态护栏）：缓解不得以弱于天气兑现的证据进入。
+      gate("easing", ["weather", "physical"], ["usec-easing-confirmed"]),
     ],
     directionMappings: [
       ["usec-catchment-support", "bullish"],
@@ -684,6 +774,9 @@ function reviewedClone(base: ThesisSeed, options: ReviewedCloneOptions): ThesisS
       sourceTierScores: { A: 100, B: 80, C: 50 },
       missingRequiredLayerCap: null,
       coverageGapCap: null,
+      forecastOnlyCap: null,
+      requiredLayerStaleCap: null,
+      unexplainedConflictCap: null,
     },
     materialChangeThresholds: {
       reviewStatus: "approved",

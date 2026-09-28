@@ -1,6 +1,8 @@
 import { canonicalJson, sha256Hex } from "./canonical-json";
 import type { ThesisDirection, ThesisStage } from "./contracts";
 import { evaluateDirectionAndConfidence } from "./direction-confidence";
+import { deepFreeze } from "./internal/freeze";
+import { CANONICAL_UTC_PATTERN, parseCanonicalUtc } from "./internal/time";
 import type {
   DirectionConfidenceEvaluation,
   EvidenceLayer,
@@ -206,7 +208,9 @@ export async function buildThesisDraftStorageRecord(
   } catch {
     throw validationError("阶段结果无法从 seed、证据选择和前序阶段重建");
   }
-  if (expectedStage.transition === "invalid" || expectedStage.manualConfirmationApplied) {
+  // 纵深防御：manual_forward_skip 通道已在 D2 移除（transition 联合类型不再含该值），
+  // 这里保留 invalid 转换与全量重建校验，保证伪造/过期阶段结果无法落库。
+  if (expectedStage.transition === "invalid") {
     throw validationError("阶段结果不具备可持久化的可信审计基础");
   }
   if (!sameCanonicalValue(candidate.stageResult, expectedStage)) {
@@ -358,11 +362,10 @@ export async function computeThesisDraftKey(material: ThesisDraftKeyMaterial): P
 }
 
 function assertCanonicalUtc(value: string, field: string): void {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+  if (typeof value !== "string" || !CANONICAL_UTC_PATTERN.test(value)) {
     throw validationError(`${field} 必须是毫秒精度 UTC ISO-8601`);
   }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value) {
+  if (parseCanonicalUtc(value) === null) {
     throw validationError(`${field} 必须是有效 UTC 时间`);
   }
 }
@@ -383,10 +386,4 @@ function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
 
 function validationError(message: string): ThesisDraftValidationError {
   return new ThesisDraftValidationError(message);
-}
-
-function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
 }

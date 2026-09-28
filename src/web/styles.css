@@ -483,13 +483,23 @@ h2 {
   color: #155940;
 }
 
+.health-status.delayed,
 .health-status.stale {
   color: #7c6514;
 }
 
-.health-status.unavailable {
+.health-status.degraded {
+  color: #865f0b;
+}
+
+.health-status.broken {
   color: #8b3630;
 }
+
+/* 来源健康状态片色阶（纯展示，全部复用既有色板）：正常为绿；延迟/过期同属时间性预警，共用
+   橄榄琥珀；降级为能力受损预警，与后台运行「部分完成」同色（D4 的 degraded 即由 partial 派生）；
+   故障为红。五档在共享 #fffdf7 底色上仅以文字颜色分级，避免新造配色体系。
+   注：color-contrast.test.mjs 的选择器解析不认前置注释，说明文字须放在本组规则之后。 */
 
 .thesis-detail {
   display: grid;

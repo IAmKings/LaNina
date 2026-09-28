@@ -117,6 +117,20 @@ describe("NOAA RONI adapter behavior", () => {
     expect(second.rawBody).toBeNull();
   });
 
+  it("classifies invalid UTF-8 bytes as SCHEMA_DRIFT instead of lossily decoding", async () => {
+    await expect(
+      noaaRoniAdapter.collect({
+        ...baseContext,
+        // previousContentHash 与响应体必然不同，确保走到解码分支。
+        previousContentHash: "known-hash",
+        fetch: vi.fn(async () => new Response(new Uint8Array([0xc3, 0x28]), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=UTF-8" },
+        })),
+      }),
+    ).rejects.toMatchObject({ code: "SCHEMA_DRIFT", retryable: false });
+  });
+
   it.each([
     [408, "NETWORK", true],
     [429, "RATE_LIMIT", true],

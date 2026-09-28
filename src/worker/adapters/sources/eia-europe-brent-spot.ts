@@ -1,12 +1,11 @@
 import type {
   CollectContext,
-  CollectResult,
   ObservationInput,
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
 import { parseCanonicalUtc } from "../../ingestion/time";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { createHttpSourceAdapter } from "./adapter-base";
 
 export const EIA_EUROPE_BRENT_SOURCE_ID = "eia_europe_brent_spot";
 export const EIA_EUROPE_BRENT_ADAPTER_KEY = "eia-petroleum-spot-v1";
@@ -15,8 +14,11 @@ export const EIA_EUROPE_BRENT_SOURCE_URL =
 export const EIA_EUROPE_BRENT_INDICATOR_ID =
   "eia_europe_brent_spot_usd_per_bbl_daily";
 export const EIA_EUROPE_BRENT_MAX_BYTES = 64 * 1024;
-export const EIA_EUROPE_BRENT_MAX_ROWS = 40;
+/** 54 天窗口最多约 41 个交易日（含假期余量取 62），响应行数仍受固定上限拒绝保护。 */
+export const EIA_EUROPE_BRENT_MAX_ROWS = 62;
 export const EIA_EUROPE_BRENT_WINDOW_DAYS = 54;
+/** 末行新鲜度断言：最后一行必须落在窗口结束前 7 天内，否则视为上游静默截断。 */
+export const EIA_EUROPE_BRENT_STALE_TAIL_DAYS = 7;
 
 const WIRE_UNIT = "$/BBL";
 const NORMALIZED_UNIT = "USD/bbl";
@@ -47,78 +49,37 @@ interface ParsedBrentRow {
  * factory and exists in the request URL only for the duration of fetch.
  */
 export function createEiaEuropeBrentSpotAdapter(apiKey?: string): SourceAdapter {
-  return {
+  return createHttpSourceAdapter({
     key: EIA_EUROPE_BRENT_ADAPTER_KEY,
-
-    async collect(context: CollectContext): Promise<CollectResult> {
-      if (
-        context.sourceId !== EIA_EUROPE_BRENT_SOURCE_ID ||
-        context.sourceUrl !== EIA_EUROPE_BRENT_SOURCE_URL
-      ) {
-        throw new SourceCollectionError("VALIDATION", "EIA Brent 来源 ID 或地址不在允许列表");
-      }
-      if (apiKey === undefined || apiKey.trim().length === 0) {
-        throw new SourceCollectionError("AUTH", "EIA API 密钥未配置");
-      }
-
-      const window = requestWindow(context.scheduledAt);
-      const requestUrl = buildRequestUrl(apiKey, window);
-      const headers = new Headers({ Accept: "application/json" });
-      if (context.previousEtag !== null) headers.set("If-None-Match", context.previousEtag);
-      if (context.previousLastModified !== null) {
-        headers.set("If-Modified-Since", context.previousLastModified);
-      }
-
-      let response: Response;
-      try {
-        response = await context.fetch(requestUrl, { headers, redirect: "manual" });
-      } catch (error) {
-        throw new SourceCollectionError("NETWORK", "无法连接 EIA", { retryable: true, cause: error });
-      }
-
-      const etag = response.headers.get("etag");
-      const lastModified = response.headers.get("last-modified");
-      const contentType = response.headers.get("content-type");
-      if (response.status === 304) {
-        return unchangedResult(context, {
-          etag: etag ?? context.previousEtag,
-          lastModified: lastModified ?? context.previousLastModified,
-          contentType,
-          contentHash: context.previousContentHash,
-        });
-      }
-      if (!response.ok) throw errorForResponse(response);
-      if (mediaType(contentType) !== "application/json") {
-        throw schemaDrift("EIA 响应不再是 JSON");
-      }
-
-      const rawBody = await readBodyWithinLimit(response, EIA_EUROPE_BRENT_MAX_BYTES);
-      const decoded = decodeUtf8(rawBody);
-      if (decoded.includes(apiKey)) {
-        throw schemaDrift("EIA 响应包含不应回显的认证信息");
-      }
-      const contentHash = await sha256Hex(rawBody);
-      if (contentHash === context.previousContentHash) {
-        return unchangedResult(context, { etag, lastModified, contentType, contentHash });
-      }
-
-      const rows = parsePayload(decoded, window);
-      const observations = rows.map((row) => observation(row, context.fetchedAt));
-      return {
-        sourceId: context.sourceId,
-        fetchedAt: context.fetchedAt,
-        sourcePublishedAt: null,
-        etag,
-        lastModified,
-        contentType,
-        contentHash,
-        rawBody,
-        observations,
-        warnings: [],
-        status: "changed",
-      };
+    sourceKey: "EIA",
+    maxBytes: EIA_EUROPE_BRENT_MAX_BYTES,
+    accept: "application/json",
+    redirect: "manual",
+    mediaType: { kind: "equals", value: "application/json", driftMessage: "EIA 响应不再是 JSON" },
+    body: { kind: "utf8", driftMessage: "EIA 响应不是有效 UTF-8" },
+    secret: { value: apiKey ?? "", driftMessage: "EIA 响应包含不应回显的认证信息" },
+    prepare(context) {
+      return { url: resolveEiaRequestUrl(apiKey, context) };
     },
-  };
+    parse(decoded, context) {
+      const rows = parsePayload(decoded, requestWindow(context.scheduledAt));
+      return { observations: rows.map((row) => observation(row, context.fetchedAt)) };
+    },
+  });
+}
+
+/** 允许列表与密钥校验保持在 fetch 之前；固定窗口请求 URL 在此统一推导。 */
+function resolveEiaRequestUrl(apiKey: string | undefined, context: CollectContext): URL {
+  if (
+    context.sourceId !== EIA_EUROPE_BRENT_SOURCE_ID ||
+    context.sourceUrl !== EIA_EUROPE_BRENT_SOURCE_URL
+  ) {
+    throw new SourceCollectionError("VALIDATION", "EIA Brent 来源 ID 或地址不在允许列表");
+  }
+  if (apiKey === undefined || apiKey.trim().length === 0) {
+    throw new SourceCollectionError("AUTH", "EIA API 密钥未配置");
+  }
+  return buildRequestUrl(apiKey, requestWindow(context.scheduledAt));
 }
 
 function requestWindow(scheduledAt: string): { start: string; end: string } {
@@ -215,7 +176,27 @@ function parsePayload(
       throw new SourceCollectionError("VALIDATION", "EIA 响应未按观测日升序排列");
     }
   }
+  assertFreshTail(rows, window);
   return rows;
+}
+
+/**
+ * 上游把请求窗口静默截断（如分页边界、历史重放）时，行数检查发现不了——这里断言
+ * 最后一行必须贴近窗口末端，防止「最新行情丢失但运行仍显示成功」。
+ */
+function assertFreshTail(
+  rows: readonly ParsedBrentRow[],
+  window: { start: string; end: string },
+): void {
+  const endDate = parseCanonicalUtc(`${window.end}T00:00:00.000Z`, "window.end");
+  endDate.setUTCDate(endDate.getUTCDate() - EIA_EUROPE_BRENT_STALE_TAIL_DAYS);
+  const minimumTailPeriod = isoDate(endDate);
+  const lastPeriod = rows[rows.length - 1]?.period ?? "";
+  if (lastPeriod < minimumTailPeriod) {
+    throw schemaDrift(
+      `EIA 末行观测 ${lastPeriod} 早于窗口末端 ${minimumTailPeriod}（上游疑似静默截断）`,
+    );
+  }
 }
 
 function parseRow(
@@ -331,18 +312,6 @@ function nonBlankString(value: unknown, field: string): string {
   return value;
 }
 
-function decodeUtf8(bytes: Uint8Array): string {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw schemaDrift("EIA 响应不是有效 UTF-8");
-  }
-}
-
-function mediaType(contentType: string | null): string | null {
-  return contentType?.split(";", 1)[0].trim().toLowerCase() ?? null;
-}
-
 function isCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -355,22 +324,6 @@ function isoDate(value: Date): string {
 
 function schemaDrift(message: string): SourceCollectionError {
   return new SourceCollectionError("SCHEMA_DRIFT", message);
-}
-
-function unchangedResult(
-  context: CollectContext,
-  metadata: Pick<CollectResult, "etag" | "lastModified" | "contentType" | "contentHash">,
-): CollectResult {
-  return {
-    sourceId: context.sourceId,
-    fetchedAt: context.fetchedAt,
-    sourcePublishedAt: null,
-    ...metadata,
-    rawBody: null,
-    observations: [],
-    warnings: [],
-    status: "unchanged",
-  };
 }
 
 export const buildEiaUrl = buildRequestUrl;

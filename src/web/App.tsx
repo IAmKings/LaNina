@@ -9,17 +9,23 @@ import {
 } from "../domain/page-models";
 import { CategoryPage } from "./CategoryPage";
 import { ChangesPage, DataHealthPage, MethodologyPage } from "./PublicInformationPages";
+import { isAbort } from "./is-abort";
 import {
   directionLabel,
-  formatShanghaiTime,
   freshnessLabel,
   hasPublicOverview,
   riskMapEmptyStageLabel,
   riskMapRows,
   stageLabel,
 } from "./overview-view";
+import { formatShanghaiTime } from "./shanghai-time";
 import { ThesisDetailPage } from "./ThesisDetailPage";
-import { shanghaiToday } from "./admin-daily-view";
+import {
+  ADMIN_RUNS_PATH,
+  BARE_ADMIN_PATH,
+  adminDailyDateFromPath,
+  adminDraftThesisIdFromPath,
+} from "./paths";
 import { applyPageMetadata } from "./seo";
 
 // Research-admin screens stay behind Access and out of the public first paint: they load on demand
@@ -47,22 +53,24 @@ export function App() {
   useEffect(() => {
     applyPageMetadata(document, {
       origin: window.location.origin,
-      pathname: window.location.pathname,
+      pathname: normalizePathname(window.location.pathname),
     });
   }, []);
 
+  const pathname = normalizePathname(window.location.pathname);
   // `/admin` 只是 Access 的保护前缀；进入后客户端改址到运行总览（无条件 effect）。
-  const bareAdmin = window.location.pathname === "/admin";
+  // 后台路径判定（含 /admin/runs 与两个解析器）统一来自 ./paths，seo.ts 共享同一实现。
+  const bareAdmin = pathname === BARE_ADMIN_PATH;
   useEffect(() => {
     if (bareAdmin) window.location.replace("/admin/runs");
   }, [bareAdmin]);
 
-  const adminRuns = window.location.pathname === "/admin/runs";
-  const adminDailyDate = adminDailyDateFromPath(window.location.pathname);
-  const adminDraftThesisId = adminDraftThesisIdFromPath(window.location.pathname);
-  const thesisSlug = thesisSlugFromPath(window.location.pathname);
-  const category = categoryFromPath(window.location.pathname);
-  const informationPage = informationPageFromPath(window.location.pathname);
+  const adminRuns = pathname === ADMIN_RUNS_PATH;
+  const adminDailyDate = adminDailyDateFromPath(pathname);
+  const adminDraftThesisId = adminDraftThesisIdFromPath(pathname);
+  const thesisSlug = thesisSlugFromPath(pathname);
+  const category = categoryFromPath(pathname);
+  const informationPage = informationPageFromPath(pathname);
   const adminRoute = adminRuns
     ? <AdminRunsPage />
     : adminDailyDate !== null
@@ -78,7 +86,7 @@ export function App() {
     );
   }
   return (
-    <PageShell currentPath={window.location.pathname}>
+    <PageShell currentPath={pathname}>
       {adminRoute !== null
         ? <Suspense fallback={<AdminRouteFallback />}>{adminRoute}</Suspense>
         : thesisSlug !== null
@@ -91,7 +99,9 @@ export function App() {
                 ? <DataHealthPage />
                 : informationPage === "methodology"
                   ? <MethodologyPage />
-                  : <OverviewPage />}
+                  : pathname === "/"
+                    ? <OverviewPage />
+                    : <NotFoundPage />}
     </PageShell>
   );
 }
@@ -106,16 +116,27 @@ function AdminRouteFallback() {
   );
 }
 
-function adminDraftThesisIdFromPath(pathname: string): string | null {
-  const matched = /^\/admin\/theses\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/draft$/.exec(pathname);
-  return matched?.[1] ?? null;
+/**
+ * Unknown paths render an explicit 404 page instead of falling back to the public overview. The
+ * Worker keeps serving the SPA shell for deep links (hard refresh must work), so the HTTP status
+ * stays 200; the 404 is expressed by this content plus the matching `seo.ts` metadata.
+ */
+export function NotFoundPage() {
+  return (
+    <section className="notice-panel" aria-labelledby="not-found-heading">
+      <p className="eyebrow">404</p>
+      <h1 id="not-found-heading">页面不存在</h1>
+      <p>你访问的地址没有对应的公开页面；已发布的研究内容仍可从首页与主导航进入。</p>
+      <p>
+        <a href="/">返回首页</a>
+      </p>
+    </section>
+  );
 }
 
-/** `/admin/daily` resolves to the current Asia/Shanghai brief date; an explicit date is preserved. */
-function adminDailyDateFromPath(pathname: string): string | null {
-  if (pathname === "/admin/daily" || pathname === "/admin/daily/") return shanghaiToday();
-  const matched = /^\/admin\/daily\/(\d{4}-\d{2}-\d{2})$/.exec(pathname);
-  return matched?.[1] ?? null;
+/** `/rubber/` 与 `/rubber` 是同一页面：去掉结尾单个 `/`（根路径保留自己的斜杠）。 */
+function normalizePathname(pathname: string): string {
+  return pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
 function OverviewPage() {
@@ -140,7 +161,7 @@ function OverviewPage() {
         setOverview({ data: body.data, status: "ready" });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (isAbort(error, controller.signal)) {
           return;
         }
 
@@ -399,7 +420,7 @@ export function OverviewContent({ overview }: { overview: OverviewState }) {
             </div>
             <a href="/data-health">数据详情</a>
           </div>
-          <p className="health-summary">正常 {data.sourceHealth.healthy} · 延迟 {data.sourceHealth.delayed} · 过期 {data.sourceHealth.stale} · 故障 {data.sourceHealth.broken}</p>
+          <p className="health-summary">正常 {data.sourceHealth.healthy} · 延迟 {data.sourceHealth.delayed} · 降级 {data.sourceHealth.degraded} · 过期 {data.sourceHealth.stale} · 故障 {data.sourceHealth.broken}</p>
           <dl className="health-list">
             <div>
               <dt>页面数据新鲜度</dt>

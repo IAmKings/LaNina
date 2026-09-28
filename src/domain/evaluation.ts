@@ -35,6 +35,14 @@ export interface EvaluationEvidenceInput {
   readonly indicatorId: string;
   readonly sourceId: string;
   readonly layer: EvidenceLayer;
+  /**
+   * O5（2026-09-25 深审）：输入侧的 stance/weight/freshness 是「排序身份」字段——仅参与
+   * 证据排序身份（evidence-selector 的 evidencePayloadKey 决胜）与一条 PENDING_SELECTOR
+   * 拒绝文案。选择与评估语义一律以 selector.defaultStance / selector.weight / SLO 新鲜度
+   * 分类为准：selectEvidence 选中时会按 selector 覆盖这三者，stage-gate 按重建值校验。
+   * 保留字段是为兼容既有调用方构造并维持排序身份稳定（移除会牵动全部输入构造点）；
+   * 不要新增消费方，也不要据输入值判断证据语义。
+   */
   readonly stance: EvidenceStance;
   readonly weight: number;
   readonly observedAt: string;
@@ -46,6 +54,7 @@ export interface EvaluationEvidenceInput {
   readonly citationUrl: string;
   readonly sourceTier: SourceTier;
   readonly sourceHealth: SourceHealthStatus;
+  /** 输入侧仅参与排序身份；语义见接口上方 stance/weight/freshness 的 O5 注释。 */
   readonly freshness: EvidenceFreshnessState;
 }
 
@@ -97,7 +106,6 @@ export const STAGE_GATE_REASON_CODES = [
   "RELIEF_BASIS_REQUIRED",
   "EASING_REQUIRES_PRIOR_IMPACT",
   "FORWARD_SKIP_REQUIRES_CONFIRMATION",
-  "MANUAL_FORWARD_SKIP_CONFIRMED",
   "DOWNGRADE",
   "THESIS_MISMATCH",
   "INVALID_SELECTION",
@@ -128,11 +136,6 @@ export interface StageGateCheck {
   readonly reasons: readonly StageGateReason[];
 }
 
-export interface StageGateManualConfirmation {
-  readonly confirmedBy: string;
-  readonly reason: string;
-}
-
 export interface StageGateResult {
   readonly thesisId: string;
   readonly cutoff: string;
@@ -142,11 +145,9 @@ export interface StageGateResult {
   readonly transition:
     | "unchanged"
     | "promoted"
-    | "manual_forward_skip"
     | "downgraded"
     | "blocked"
     | "invalid";
-  readonly manualConfirmationApplied: boolean;
   readonly checks: readonly StageGateCheck[];
   readonly reasons: readonly StageGateReason[];
 }

@@ -10,6 +10,7 @@ import {
   detectMaterialChanges,
   type MaterialChangeSnapshot,
 } from "./material-change";
+import { evaluateRulePredicate } from "./rule-predicate";
 import { evaluateStageGates } from "./stage-gate";
 import {
   decodeThesisSeed,
@@ -64,7 +65,8 @@ describe("detectMaterialChanges", () => {
   it("merges stage, direction and confidence triggers into one thesis change", async () => {
     const seed = reviewedSeed();
     const before = snapshot(seed, "watch", BEFORE_CUTOFF, [
-      evidence(seed, "weather-refute", { value: 11 }),
+      // D3 后前后 coverage/freshness 同分母不再产生差值，用来源等级降级补足置信度触发。
+      evidence(seed, "weather-refute", { value: 11, sourceTier: "C" }),
     ]);
     const after = snapshot(seed, before.evaluation.stage, AFTER_CUTOFF, [
       evidence(seed, "weather-support", { value: 11 }),
@@ -102,20 +104,58 @@ describe("detectMaterialChanges", () => {
     const eleven = await confidenceChange(elevenPointSeed, "C", "A");
 
     expect(thesisTriggers(nine)).not.toContainEqual(expect.objectContaining({ kind: "confidence" }));
+    // D3（2026-09-26 签字）后 coverage/freshness 分母为种子全集：coverage 25、freshness 20，
+    // 分值本身变化，但仅 sourceQuality 不同的前后置信度差值不变（tier 差 × 25% 权重）。
     expect(thesisTriggers(ten)).toContainEqual({
       kind: "confidence",
-      before: 78,
-      after: 88,
+      before: 48,
+      after: 58,
       absoluteDelta: 10,
       threshold: 10,
     });
     expect(thesisTriggers(eleven)).toContainEqual({
       kind: "confidence",
-      before: 77,
-      after: 88,
+      before: 47,
+      after: 58,
       absoluteDelta: 11,
       threshold: 10,
     });
+  });
+
+  it("does not create a direction trigger while the D1 guard keeps a direction unavailable", async () => {
+    const base = reviewedSeed();
+    // 把 weather 支持规则换成 selector_present：before 只有 selector_present 命中，
+    // D1 守卫输出 unavailable（方向值回到默认 neutral）；after 由 numeric 规则命中 bullish。
+    const guardedSeed = {
+      ...base,
+      supportRules: base.supportRules.map((rule) => rule.id === "support-weather"
+        ? {
+            id: "support-weather",
+            label: "support weather present",
+            reviewStatus: "approved" as const,
+            active: true,
+            predicate: {
+              kind: "selector_present" as const,
+              selectorIds: ["weather-support"],
+              minimumMatches: 1,
+            },
+          }
+        : rule),
+    };
+    const before = snapshot(guardedSeed, "watch", BEFORE_CUTOFF, [
+      evidence(guardedSeed, "weather-support", { value: 11 }),
+    ]);
+    const after = snapshot(guardedSeed, before.evaluation.stage, AFTER_CUTOFF, [
+      evidence(guardedSeed, "market", { value: 11 }),
+    ]);
+
+    expect(before.evaluation.direction).toMatchObject({ status: "unavailable", direction: "neutral" });
+    expect(after.evaluation.direction).toMatchObject({ status: "available", direction: "bullish" });
+
+    const result = await detectMaterialChanges(guardedSeed, before, after);
+
+    // 方向值虽从 neutral 变为 bullish，但前值 unavailable：不触发方向变化审核。
+    expect(thesisTriggers(result)).not.toContainEqual(expect.objectContaining({ kind: "direction" }));
   });
 
   it("emits independent entered and exited threshold facts from reviewed numeric rules", async () => {
@@ -246,6 +286,44 @@ describe("detectMaterialChanges", () => {
     ]);
   });
 
+  it("judges the same inclusive boundary identically through numeric_compare and the revision delta", async () => {
+    // D3 容差签字（threshold-worksheet §5）：numeric_compare 与修订达标判定（meetsInclusiveDelta）
+    // 共用 internal/compare 的 4×EPSILON 缩放容差。before 值取 0 使 revision 路径的容差标定
+    // （max(1, |before|, |after|, |required|)）与 numeric_compare（max(1, |值|, |阈值|)）一致，
+    // 两条路径对同一边界值必须给出相同答案——否则方向判定与修订达标判定会互相矛盾。
+    const base = reviewedSeed();
+    const seed: ThesisSeed = {
+      ...base,
+      supportRules: [numericRule("support-weather", "weather-support", "gte", 0.5)],
+      materialChangeThresholds: {
+        reviewStatus: "approved" as const,
+        active: true,
+        confidenceDeltaPoints: 10,
+        observationRevisionDelta: 0.5,
+      },
+    };
+    const rule = seed.supportRules[0];
+    if (rule?.predicate.kind !== "numeric_compare") throw new TypeError("expected numeric rule");
+    const predicateHit = (value: number) => evaluateRulePredicate(
+      rule.predicate,
+      selectEvidence(seed, AFTER_CUTOFF, [evidence(seed, "weather-support", { value })]).selectedEvidence,
+    ).length;
+
+    const withinTolerance = 0.5 - Number.EPSILON / 2; // 「0.4999…」型表示误差：按恰好等于阈值
+    const justAbove = 0.5 + Number.EPSILON; // 容差内上方：≥ 同样命中
+    const beyondBound = 0.5 - Number.EPSILON * 5; // 恰低于容差下界：不再视为相等
+    const plainlyBelow = 0.4999; // 人类刻度上的低于阈值
+
+    for (const value of [0.5, withinTolerance, justAbove]) {
+      expect(predicateHit(value)).toBe(1);
+      expect(factChanges(await revisionTransition(seed, 0, value, 0, 1), "revision")).toHaveLength(1);
+    }
+    for (const value of [beyondBound, plainlyBelow]) {
+      expect(predicateHit(value)).toBe(0);
+      expect(factChanges(await revisionTransition(seed, 0, value, 0, 1), "revision")).toEqual([]);
+    }
+  });
+
   it("rejects cross-period, unit/text and revision rollback false positives", async () => {
     const seed = reviewedSeed();
 
@@ -337,7 +415,7 @@ describe("detectMaterialChanges", () => {
     });
   });
 
-  it("keeps keys stable across input order and cutoff changes while retaining audit cutoffs", async () => {
+  it("keeps fact-change keys stable across input order and cutoff changes while retaining audit cutoffs", async () => {
     const seed = reviewedSeed();
     const beforeEvidence = evidence(seed, "weather-support", { value: 9 });
     const afterEvidence = evidence(seed, "weather-support", { value: 11 });
@@ -364,6 +442,57 @@ describe("detectMaterialChanges", () => {
     expect(firstThreshold?.idempotencyKey).toBe(shiftedThreshold?.idempotencyKey);
     expect(firstThreshold?.beforeCutoff).toBe(BEFORE_CUTOFF);
     expect(shiftedThreshold?.beforeCutoff).toBe(AFTER_CUTOFF);
+  });
+
+  it("produces a different thesis key when the same change replays across cutoffs", async () => {
+    const seed = reviewedSeed();
+    const thesisChange = async (beforeCutoff: string, afterCutoff: string) => {
+      const before = snapshot(seed, "watch", beforeCutoff, [
+        evidence(seed, "weather-refute", { value: 11 }),
+      ]);
+      const after = snapshot(seed, before.evaluation.stage, afterCutoff, [
+        evidence(seed, "weather-support", { value: 11 }),
+      ]);
+      const result = await detectMaterialChanges(seed, before, after);
+      const change = result.changes.find(({ changeType }) => changeType === "thesis");
+      if (change?.changeType !== "thesis") throw new TypeError("expected one thesis change");
+      return change;
+    };
+
+    const first = await thesisChange(BEFORE_CUTOFF, AFTER_CUTOFF);
+    const replayed = await thesisChange(AFTER_CUTOFF, "2026-09-08T14:00:00.000Z");
+
+    // 触发与前后状态完全相同，仅重放窗口（cutoff 对）不同：key 必须不同，
+    // 使重放不会被旧评估的 change key 去重吞掉。
+    expect(replayed.triggers).toEqual(first.triggers);
+    expect(replayed.before).toEqual(first.before);
+    expect(replayed.after).toEqual(first.after);
+    expect(first.beforeCutoff).toBe(BEFORE_CUTOFF);
+    expect(first.afterCutoff).toBe(AFTER_CUTOFF);
+    expect(replayed.beforeCutoff).toBe(AFTER_CUTOFF);
+    expect(replayed.afterCutoff).toBe("2026-09-08T14:00:00.000Z");
+    expect(first.idempotencyKey).not.toBe(replayed.idempotencyKey);
+  });
+
+  it("keeps the thesis key stable when the same cutoff pair is re-evaluated", async () => {
+    const seed = reviewedSeed();
+    const build = () => {
+      const before = snapshot(seed, "watch", BEFORE_CUTOFF, [
+        evidence(seed, "weather-refute", { value: 11 }),
+      ]);
+      const after = snapshot(seed, before.evaluation.stage, AFTER_CUTOFF, [
+        evidence(seed, "weather-support", { value: 11 }),
+      ]);
+      return detectMaterialChanges(seed, before, after);
+    };
+
+    const first = await build();
+    const repeated = await build();
+    const firstThesis = first.changes.find(({ changeType }) => changeType === "thesis");
+    const repeatedThesis = repeated.changes.find(({ changeType }) => changeType === "thesis");
+
+    expect(firstThesis?.changeType === "thesis" ? firstThesis.idempotencyKey : null)
+      .toBe(repeatedThesis?.changeType === "thesis" ? repeatedThesis.idempotencyKey : null);
   });
 
   it("changes the idempotency key when the methodology version changes", async () => {
@@ -569,6 +698,9 @@ function reviewedSeed(
       sourceTierScores: options.sourceTierScores ?? { A: 100, B: 60, C: 50 },
       missingRequiredLayerCap: null,
       coverageGapCap: null,
+      forecastOnlyCap: null,
+      requiredLayerStaleCap: null,
+      unexplainedConflictCap: null,
     },
     materialChangeThresholds: {
       reviewStatus: "approved",

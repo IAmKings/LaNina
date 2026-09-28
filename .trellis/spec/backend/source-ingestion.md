@@ -34,7 +34,16 @@ npm run smoke:live
 ### 3. Contracts
 
 - Adapter URLs, source IDs and adapter keys are code-owned allowlists. D1 or operator input must
-  never introduce an arbitrary fetch URL.
+  never introduce an arbitrary fetch URL. URLs extracted from a fetched document (e.g. a CSV link
+  parsed out of an HTML page) must be re-validated against the same allowlist before a second
+  fetch — otherwise the first response can poison the second request target.
+- Every external fetch goes through the timeout wrapper in `sources/http.ts`
+  (`fetchWithinTimeout`, default 30s, `AbortSignal.timeout` + a deterministic setTimeout race).
+  A timeout is a retryable `NETWORK` failure, never `VALIDATION`. Adapters must not call the
+  injected `fetch` directly.
+- Any decompression path (e.g. `minimal-xlsx.ts`) must count decompressed output bytes and abort
+  with `SCHEMA_DRIFT` past a fixed budget, and must inflate only the entries it needs. Never
+  decompress an unbounded upstream body inside the Worker memory limit.
 - Source credentials are optional Worker/process secrets captured by adapter factories. A secret
   may enter the exact upstream authentication field only; it must not enter source configuration,
   results, D1, R2, fixtures, errors or logs.

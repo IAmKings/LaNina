@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertInitialClientJavaScriptBudget,
+  formatBudgetReport,
   initialClientJavaScriptBudget,
 } from "./initial-client-js-budget.mjs";
 
@@ -38,6 +39,27 @@ describe("initial client JavaScript bundle budget", () => {
     const clientDirectory = await clientBuild({ files: { "assets/index.js": 250 * 1024 + 1 } });
 
     await expect(assertInitialClientJavaScriptBudget({ clientDirectory })).rejects.toThrow("超过 250.00 KiB 预算");
+  });
+
+  it("reports current, limit, remaining and usage percentage", () => {
+    const report = formatBudgetReport({
+      bytes: 240 * 1024,
+      entryFiles: ["assets/index.js"],
+      limitBytes: 250 * 1024,
+    });
+
+    expect(report).toContain("当前：240.00 KiB（245760 字节）");
+    expect(report).toContain("上限：250.00 KiB（256000 字节）");
+    expect(report).toContain("余量：10.00 KiB（10240 字节）");
+    expect(report).toContain("占用：96.00%");
+
+    const overBudgetReport = formatBudgetReport({
+      bytes: 250 * 1024 + 512,
+      entryFiles: ["assets/index.js"],
+      limitBytes: 250 * 1024,
+    });
+    expect(overBudgetReport).toContain("余量：-0.50 KiB（-512 字节）");
+    expect(overBudgetReport).toContain("占用：100.20%");
   });
 
   it("fails before measuring when the Vite manifest is missing or inconsistent with index.html", async () => {

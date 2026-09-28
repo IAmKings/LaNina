@@ -48,7 +48,7 @@ function input(overrides = {}) {
     sourceId: TARGET.sourceId,
     reason: "核对 NOAA 更新",
     idempotencyKey: "probe-idem-key-1",
-    actor: { email: "editor@example.test", roles: ["editor"] },
+    actor: "editor@example.test",
     occurredAt: "2026-09-10T01:00:00.000Z",
     scheduledAt: "2026-09-10T01:00:00.000Z",
     operationId: "probe-operation-1",

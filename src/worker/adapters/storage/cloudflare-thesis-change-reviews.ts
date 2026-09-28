@@ -3,6 +3,7 @@ import {
   type ThesisChangeReviewRecord,
   type ThesisChangeReviewRepository,
 } from "../../modules/thesis-change-reviews";
+import { deepFreeze } from "../../../domain/internal/freeze";
 
 interface VersionRow {
   status: "draft" | "published" | "withdrawn";
@@ -137,7 +138,11 @@ function decodeReview(row: ReviewRow): ThesisChangeReviewRecord {
   ) {
     throw databaseError();
   }
-  return Object.freeze({
+  // deepFreeze instead of a bare Object.freeze: the decoded record is flat (every value is a
+  // primitive string or null), so shallow and deep freezing are observably identical here — the
+  // original top-level-only freeze was not a deliberate semantic choice. The deep variant matches
+  // the other storage adapters and stays correct if nested values are ever added to the record.
+  return deepFreeze({
     thesisId: row.thesis_id,
     afterVersionId: row.after_version_id,
     beforeVersionId: row.before_version_id,

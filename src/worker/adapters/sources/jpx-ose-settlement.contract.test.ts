@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { SourceCollectionError } from "../../../domain/ingestion";
 import {
   JPX_OSE_RSS3_INDICATOR_ID,
   JPX_OSE_SOURCE_URL,
@@ -87,6 +88,94 @@ describe("JPX/OSE 当日结算零成本来源", () => {
     expect(result.warnings).toContain("NEARBY_SELECTION_V1_NEXT_EXPIRY");
   });
 
+  it("collect：不再伪造 If-None-Match（内容哈希不是 ETag）", async () => {
+    const seenHeaders: string[] = [];
+    await jpxOseSettlementAdapter.collect({
+      sourceId: "jpx_ose_rubber_settlement",
+      sourceUrl: JPX_OSE_SOURCE_URL,
+      scheduledAt: "2026-09-18T08:00:00.000Z",
+      fetchedAt: "2026-09-18T08:00:00.000Z",
+      previousEtag: null,
+      previousLastModified: null,
+      previousContentHash: "a".repeat(64),
+      fetch: async (_url, init) => {
+        seenHeaders.push(new Headers(init?.headers).get("If-None-Match") ?? "absent");
+        if (seenHeaders.length === 1) {
+          return new Response(SETTLEMENT_PAGE, { status: 200, headers: { "content-type": "text/html" } });
+        }
+        return new Response(new TextEncoder().encode(SETTLEMENT_CSV), {
+          status: 200,
+          headers: { "content-type": "text/csv" },
+        });
+      },
+    });
+    expect(seenHeaders).toEqual(["absent", "absent"]);
+  });
+
+  it("collect：CSV 请求返回 304 时防御性视为 unchanged（不落观测、不写快照）", async () => {
+    const result = await jpxOseSettlementAdapter.collect({
+      sourceId: "jpx_ose_rubber_settlement",
+      sourceUrl: JPX_OSE_SOURCE_URL,
+      scheduledAt: "2026-09-18T08:00:00.000Z",
+      fetchedAt: "2026-09-18T08:00:00.000Z",
+      previousEtag: null,
+      previousLastModified: null,
+      previousContentHash: "known-hash",
+      fetch: async (url) => {
+        const target = String(url);
+        if (target === JPX_OSE_SOURCE_URL) {
+          return new Response(SETTLEMENT_PAGE, { status: 200, headers: { "content-type": "text/html" } });
+        }
+        return new Response(null, {
+          status: 304,
+          headers: { "last-modified": "Fri, 18 Sep 2026 08:00:00 GMT" },
+        });
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "unchanged",
+      contentHash: "known-hash",
+      rawBody: null,
+      observations: [],
+      lastModified: "Fri, 18 Sep 2026 08:00:00 GMT",
+    });
+  });
+
+  it("fail-closed：橡胶行列形状漂移（缺列/错位）时拒绝整份 CSV", () => {
+    const drifted = `${SETTLEMENT_CSV}\r\n1611300AK,FUT_RSS3_270122,,2027,455`;
+    expect(() => parseRubberSettlementRows(drifted)).toThrowError(/形状漂移/);
+    expect(() => parseRubberSettlementRows(drifted)).toThrowError(SourceCollectionError);
+  });
+
+  it("非橡胶品种的畸形行不参与坏行计数（既有跳过语义不变）", () => {
+    const noisy = `${SETTLEMENT_CSV}\r\n9999900XX,FUT_SHRU_270115,,,,garbage`;
+    const rows = parseRubberSettlementRows(noisy);
+    expect(rows.filter((row) => row.issueName.startsWith("FUT_RSS3_"))).toHaveLength(4);
+  });
+
+  it("fail-closed：CSV 不是有效 UTF-8 时抛 SCHEMA_DRIFT（不再有损解码）", async () => {
+    await expect(jpxOseSettlementAdapter.collect({
+      sourceId: "jpx_ose_rubber_settlement",
+      sourceUrl: JPX_OSE_SOURCE_URL,
+      scheduledAt: "2026-09-18T08:00:00.000Z",
+      fetchedAt: "2026-09-18T08:00:00.000Z",
+      previousEtag: null,
+      previousLastModified: null,
+      previousContentHash: null,
+      fetch: async (url) => {
+        const target = String(url);
+        if (target === JPX_OSE_SOURCE_URL) {
+          return new Response(SETTLEMENT_PAGE, { status: 200, headers: { "content-type": "text/html" } });
+        }
+        return new Response(new Uint8Array([0xff, 0xfe, 0x00]), {
+          status: 200,
+          headers: { "content-type": "text/csv" },
+        });
+      },
+    })).rejects.toMatchObject({ code: "SCHEMA_DRIFT", retryable: false });
+  });
+
   it("fail-closed：settlement 页不再带 rb CSV / 橡胶行缺失", async () => {
     await expect(jpxOseSettlementAdapter.collect({
       sourceId: "jpx_ose_rubber_settlement",
@@ -98,5 +187,32 @@ describe("JPX/OSE 当日结算零成本来源", () => {
       previousContentHash: null,
       fetch: async () => new Response("<html><a href='/english/index.html'>home</a></html>", { status: 200 }),
     })).rejects.toMatchObject({ code: "SCHEMA_DRIFT" });
+  });
+
+  it.each([
+    ["站外绝对链接", "https://evil.com/settlement-price/rb_e20260918.csv"],
+    ["同域但不在 settlement-price 目录", "https://www.jpx.co.jp/english/other/rb_e20260918.csv"],
+  ])("fail-closed：%s 注入时不向其发起抓取", async (_name, injectedHref) => {
+    const poisonedPage = `<p><a href="${injectedHref}">csv</a></p>`;
+    const fetch = vi.fn(async (url: RequestInfo | URL) => {
+      const target = String(url);
+      if (target === JPX_OSE_SOURCE_URL) {
+        return new Response(poisonedPage, { status: 200, headers: { "content-type": "text/html" } });
+      }
+      throw new Error(`fetch 未预期地址 ${target}`);
+    });
+
+    await expect(jpxOseSettlementAdapter.collect({
+      sourceId: "jpx_ose_rubber_settlement",
+      sourceUrl: JPX_OSE_SOURCE_URL,
+      scheduledAt: "2026-09-18T08:00:00.000Z",
+      fetchedAt: "2026-09-18T08:00:00.000Z",
+      previousEtag: null,
+      previousLastModified: null,
+      previousContentHash: null,
+      fetch,
+    })).rejects.toMatchObject({ code: "SCHEMA_DRIFT" });
+    // 只发生 settlement 页这一次请求：被注入的 CSV 地址从未被 fetch。
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });

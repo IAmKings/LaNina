@@ -1,4 +1,3 @@
-import type { AccessActor } from "./access-auth";
 import type { SourceAdapter, PersistedSourceRun } from "../../domain/ingestion";
 import type { RunSourceOutcome, RunSourceRequest } from "../ingestion/run-source";
 import type { CodeOwnedSourceTarget } from "../ingestion/live-smoke-targets";
@@ -7,7 +6,12 @@ export interface ManualSourceRunInput {
   readonly sourceId: string;
   readonly reason: string;
   readonly idempotencyKey: string;
-  readonly actor: AccessActor;
+  /**
+   * 已由路由层 `administrativeActor` 解析的真实 Access 成员身份（email）。只读视图允许
+   * 泛化的「已验证成员」标签，但追加型审计行必须落在真实身份上——无 email claim 的
+   * 执行者在进入本模块前即被拒绝，因此这里没有占位身份回退。
+   */
+  readonly actor: string;
   readonly occurredAt: string;
   readonly operationId: string;
 }
@@ -27,7 +31,7 @@ export interface ManualSourceRunOperation {
 
 export interface ManualSourceRunRepository {
   findEnabledSource(sourceId: string): Promise<EnabledManualSource | null>;
-  begin(operation: Omit<ManualSourceRunInput, "actor"> & { readonly actor: string }): Promise<{
+  begin(operation: ManualSourceRunInput): Promise<{
     readonly operation: ManualSourceRunOperation;
     readonly created: boolean;
   }>;
@@ -96,8 +100,7 @@ export class ManualSourceRunModule {
       throw new ManualSourceRunError("SOURCE_CONFIGURATION");
     }
 
-    const actor = input.actor.email ?? "verified-access-member";
-    const started = await this.repository.begin({ ...input, actor });
+    const started = await this.repository.begin(input);
     if (!started.created) return result(started.operation, null, true);
 
     let outcome: RunSourceOutcome;
@@ -114,7 +117,7 @@ export class ManualSourceRunModule {
 
     const completed = await this.repository.complete(
       started.operation.id,
-      actor,
+      input.actor,
       input.reason,
       input.occurredAt,
       outcome,

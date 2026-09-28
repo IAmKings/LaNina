@@ -8,7 +8,9 @@ import type {
   PageLoadState,
   ThesisCardModel,
 } from "../domain/page-models";
-import { formatShanghaiTime, healthLabel } from "./overview-view";
+import { isAbort } from "./is-abort";
+import { healthLabel } from "./overview-view";
+import { formatShanghaiTime } from "./shanghai-time";
 import {
   CHANGES_FILTER_CATEGORIES,
   categoryLabel,
@@ -24,7 +26,14 @@ import {
   type ChangesFilterState,
 } from "./public-information-view";
 
-type PublicInformationState<T> = PageLoadState<T>;
+/**
+ * Extends the shared page-load union with a "refreshing" variant: when the endpoint changes (for
+ * example new changes filters) the previous read model stays on screen instead of collapsing back
+ * to an empty loading state, marked with `aria-busy` and a visible updating notice.
+ */
+type PublicInformationState<T> =
+  | PageLoadState<T>
+  | { readonly status: "refreshing"; readonly data: T };
 
 export function ChangesPage() {
   const [filters, setFilters] = useState<ChangesFilterState>(() =>
@@ -135,60 +144,83 @@ export function ChangesPage() {
         {summary === null ? null : <p className="changes-filter-summary" role="status">{summary}</p>}
       </section>
 
-      <section className="content-section" aria-labelledby="changes-list-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">时间线</p>
-            <h2 id="changes-list-title">已公开的变化记录</h2>
-          </div>
-        </div>
-        {state.status === "loading" ? <p className="muted" role="status">正在取得最新公开变化…</p> : null}
-        {state.status === "error" ? (
-          <p className="admin-lifecycle-message is-error" role="alert">公开变化暂时无法加载。</p>
-        ) : null}
-        {state.status === "ready" ? (
-          <>
-            {state.data.freshness === "stale" ? (
-              <aside className="stale-banner" aria-label="数据延迟提醒">
-                <strong>数据延迟：</strong>变化清单仍只展示已公开内容；请结合来源健康状态判断其新鲜度。
-              </aside>
-            ) : null}
-            {state.data.changes.length === 0 ? (
-              <p className="muted">
-                {hasActiveChangesFilter(filters)
-                  ? "当前筛选条件下没有已公开的变化；可调整或清除筛选。"
-                  : "暂无已公开的最新变化。"}
-              </p>
-            ) : (
-              <ol className="changes-list changes-list-detailed">
-                {state.data.changes.map((change) => (
-                  <li key={change.id}>
-                    <time dateTime={change.detectedAt}>{formatShanghaiTime(change.detectedAt)}</time>
-                    <div>
-                      <p><strong>{change.summary}</strong>{change.thesisTitle === null ? "" : ` · ${change.thesisTitle}`}</p>
-                      <p className="change-detail">
-                        {change.beforeLabel === null ? "此前值未公开" : `此前：${change.beforeLabel}`} · 当前：{change.afterLabel} ·
-                        {change.publishedInCurrentThesis ? " 已进入当前公开论点" : " 尚未关联当前公开论点"}
-                      </p>
-                      {change.source === null ? null : (
-                        <p className="change-detail">
-                          来源：<a href={change.source.citationUrl}>{change.source.organization} · {change.source.name}</a>
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-            {state.data.nextCursor === null ? null : (
-              <p className="pagination-link">
-                <a href={changesSharePathWithCursor(filters, state.data.nextCursor)}>查看更早的公开变化</a>
-              </p>
-            )}
-          </>
-        ) : null}
-      </section>
+      <ChangesTimeline state={state} filters={filters} />
     </div>
+  );
+}
+
+/**
+ * The public changes timeline, kept as its own component so the refreshing behavior (old data on
+ * screen, `aria-busy` on the container, visible updating notice) is renderable and testable
+ * independently of the fetch lifecycle.
+ */
+export function ChangesTimeline({ state, filters }: {
+  state: PublicInformationState<ChangesPageModel>;
+  filters: ChangesFilterState;
+}) {
+  return (
+    <section
+      aria-busy={state.status === "refreshing"}
+      aria-labelledby="changes-list-title"
+      className="content-section"
+    >
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">时间线</p>
+          <h2 id="changes-list-title">已公开的变化记录</h2>
+        </div>
+      </div>
+      {state.status === "loading" ? <p className="muted" role="status">正在取得最新公开变化…</p> : null}
+      {state.status === "error" ? (
+        <p className="admin-lifecycle-message is-error" role="alert">公开变化暂时无法加载。</p>
+      ) : null}
+      {state.status === "ready" || state.status === "refreshing" ? (
+        <>
+          {state.status === "refreshing" ? (
+            <p className="muted" role="status">
+              正在按当前筛选更新变化清单；以下保留上一次的公开结果。
+            </p>
+          ) : null}
+          {state.data.freshness === "stale" ? (
+            <aside className="stale-banner" aria-label="数据延迟提醒">
+              <strong>数据延迟：</strong>变化清单仍只展示已公开内容；请结合来源健康状态判断其新鲜度。
+            </aside>
+          ) : null}
+          {state.data.changes.length === 0 ? (
+            <p className="muted">
+              {hasActiveChangesFilter(filters)
+                ? "当前筛选条件下没有已公开的变化；可调整或清除筛选。"
+                : "暂无已公开的最新变化。"}
+            </p>
+          ) : (
+            <ol className="changes-list changes-list-detailed">
+              {state.data.changes.map((change) => (
+                <li key={change.id}>
+                  <time dateTime={change.detectedAt}>{formatShanghaiTime(change.detectedAt)}</time>
+                  <div>
+                    <p><strong>{change.summary}</strong>{change.thesisTitle === null ? "" : ` · ${change.thesisTitle}`}</p>
+                    <p className="change-detail">
+                      {change.beforeLabel === null ? "此前值未公开" : `此前：${change.beforeLabel}`} · 当前：{change.afterLabel} ·
+                      {change.publishedInCurrentThesis ? " 已进入当前公开论点" : " 尚未关联当前公开论点"}
+                    </p>
+                    {change.source === null ? null : (
+                      <p className="change-detail">
+                        来源：<a href={change.source.citationUrl}>{change.source.organization} · {change.source.name}</a>
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+          {state.data.nextCursor === null ? null : (
+            <p className="pagination-link">
+              <a href={changesSharePathWithCursor(filters, state.data.nextCursor)}>查看更早的公开变化</a>
+            </p>
+          )}
+        </>
+      ) : null}
+    </section>
   );
 }
 
@@ -312,7 +344,10 @@ function InformationNotice({ eyebrow, heading, error = false }: {
 }
 
 function usePublicPage<T>(endpoint: string): PublicInformationState<T> {
-  const [state, setState] = useState<PublicInformationState<T>>({ status: "loading" });
+  const [loaded, setLoaded] = useState<{
+    readonly endpoint: string;
+    readonly state: PageLoadState<T>;
+  }>({ endpoint, state: { status: "loading" } });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -321,16 +356,23 @@ function usePublicPage<T>(endpoint: string): PublicInformationState<T> {
         if (!response.ok) throw new Error("Public page request failed");
         const body = await response.json() as unknown;
         if (!isPublicEnvelope<T>(body)) throw new Error("Public page response is malformed");
-        setState({ status: "ready", data: body.data });
+        setLoaded({ endpoint, state: { status: "ready", data: body.data } });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setState({ status: "error", message: "公开页面暂时无法加载。" });
+        if (isAbort(error, controller.signal)) return;
+        setLoaded({ endpoint, state: { status: "error", message: "公开页面暂时无法加载。" } });
       });
     return () => controller.abort();
   }, [endpoint]);
 
-  return state;
+  // Derived during render, not set in the effect: when the endpoint changes while a read model is
+  // already on screen (for example refiltering the changes page), keep that read model visible as
+  // "refreshing" instead of blanking the section back to an empty loading state.
+  const { endpoint: loadedEndpoint, state: loadedState } = loaded;
+  if (loadedEndpoint !== endpoint && loadedState.status === "ready") {
+    return { status: "refreshing", data: loadedState.data };
+  }
+  return loadedState;
 }
 
 function isPublicEnvelope<T>(value: unknown): value is ApiEnvelope<T> {

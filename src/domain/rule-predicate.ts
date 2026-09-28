@@ -1,4 +1,5 @@
 import type { SelectedEvidence } from "./evaluation";
+import { compareText, scaledEpsilonTolerance } from "./internal/compare";
 import type { RulePredicate } from "./thesis-seeds";
 
 export function evaluateRulePredicate(
@@ -45,14 +46,17 @@ function compareNumber(
   operator: Extract<RulePredicate, { kind: "numeric_compare" }>["operator"],
   threshold: number,
 ): boolean {
+  // D3 容差签字（threshold-worksheet §5）：|值 − 阈值| ≤ 4×EPSILON×max(1, |值|, |阈值|) 视为
+  // 「恰好等于阈值」，等值时 ≥/≤ 命中、>/< 不命中；其余按字面比较。与 material-change 的
+  // meetsInclusiveDelta 共用 internal/compare 的同一缩放容差口径，保证方向判定与修订达标
+  // 判定在同一边界值上不会给出相反答案。
+  if (Math.abs(value - threshold) <= scaledEpsilonTolerance(value, threshold)) {
+    return operator === "gte" || operator === "lte";
+  }
   switch (operator) {
     case "gt": return value > threshold;
     case "gte": return value >= threshold;
     case "lt": return value < threshold;
     case "lte": return value <= threshold;
   }
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }

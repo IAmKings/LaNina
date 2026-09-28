@@ -1,11 +1,6 @@
-import type {
-  CollectContext,
-  CollectResult,
-  ObservationInput,
-  SourceAdapter,
-} from "../../../domain/ingestion";
+import type { ObservationInput, SourceAdapter } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
-import { errorForResponse, readBodyWithinLimit, sha256Hex } from "./http";
+import { createHttpSourceAdapter } from "./adapter-base";
 
 export const NOAA_RONI_URL = "https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso/roni/";
 export const NOAA_RONI_SOURCE_ID = "noaa_cpc_roni";
@@ -24,89 +19,33 @@ interface ParsedRoniValue {
   observedAt: string;
 }
 
-export const noaaRoniAdapter: SourceAdapter = {
+export const noaaRoniAdapter: SourceAdapter = createHttpSourceAdapter({
   key: NOAA_RONI_ADAPTER_KEY,
-
-  async collect(context: CollectContext): Promise<CollectResult> {
+  sourceKey: "NOAA CPC",
+  maxBytes: MAX_RESPONSE_BYTES,
+  accept: "text/html",
+  redirect: "follow",
+  mediaType: { kind: "includes", value: "text/html", driftMessage: "NOAA RONI 响应不再是 HTML" },
+  body: { kind: "utf8", driftMessage: "NOAA RONI 响应不是有效 UTF-8" },
+  networkError: () => new SourceCollectionError("NETWORK", "无法连接 NOAA CPC", { retryable: true }),
+  prepare(context) {
     if (context.sourceUrl !== NOAA_RONI_URL) {
       throw new SourceCollectionError("VALIDATION", "NOAA RONI 来源地址不在允许列表");
     }
-
-    const headers = new Headers({ Accept: "text/html" });
-    if (context.previousEtag !== null) headers.set("If-None-Match", context.previousEtag);
-    if (context.previousLastModified !== null) {
-      headers.set("If-Modified-Since", context.previousLastModified);
-    }
-
-    let response: Response;
-    try {
-      response = await context.fetch(context.sourceUrl, { headers, redirect: "follow" });
-    } catch {
-      throw new SourceCollectionError("NETWORK", "无法连接 NOAA CPC", { retryable: true });
-    }
-
-    const etag = response.headers.get("etag");
-    const lastModified = response.headers.get("last-modified");
-    const contentType = response.headers.get("content-type");
-
-    if (response.status === 304) {
-      return unchangedResult(context, {
-        etag: etag ?? context.previousEtag,
-        lastModified: lastModified ?? context.previousLastModified,
-        contentType,
-        contentHash: context.previousContentHash,
-      });
-    }
-    if (!response.ok) throw errorForResponse(response);
-    if (contentType === null || !contentType.toLowerCase().includes("text/html")) {
-      throw new SourceCollectionError("SCHEMA_DRIFT", "NOAA RONI 响应不再是 HTML");
-    }
-
-    const rawBody = await readBodyWithinLimit(response, MAX_RESPONSE_BYTES);
-    const contentHash = await sha256Hex(rawBody);
-    if (contentHash === context.previousContentHash) {
-      return unchangedResult(context, { etag, lastModified, contentType, contentHash });
-    }
-
-    const html = new TextDecoder().decode(rawBody);
+    return { url: context.sourceUrl };
+  },
+  parse(html, context) {
     const parsed = parseRoniHtml(html);
     const recent = parsed.slice(-NOAA_RONI_AUTOMATED_WINDOW);
-    const observations = toObservationInputs(recent, context.fetchedAt);
-
     return {
-      sourceId: context.sourceId,
-      fetchedAt: context.fetchedAt,
-      sourcePublishedAt: null,
-      etag,
-      lastModified,
-      contentType,
-      contentHash,
-      rawBody,
-      observations,
+      observations: toObservationInputs(recent, context.fetchedAt),
       warnings: [
         "SOURCE_PUBLISHED_AT_UNKNOWN",
         ...(parsed.length > recent.length ? ["AUTOMATED_WINDOW_TRUNCATED"] : []),
       ],
-      status: "changed",
     };
   },
-};
-
-function unchangedResult(
-  context: CollectContext,
-  metadata: Pick<CollectResult, "etag" | "lastModified" | "contentType" | "contentHash">,
-): CollectResult {
-  return {
-    sourceId: context.sourceId,
-    fetchedAt: context.fetchedAt,
-    sourcePublishedAt: null,
-    ...metadata,
-    rawBody: null,
-    observations: [],
-    warnings: [],
-    status: "unchanged",
-  };
-}
+});
 
 export function parseRoniHtml(html: string): ParsedRoniValue[] {
   const tableOpen = /<table\b[^>]*\bid=["']roni-v5-table2["'][^>]*>/i.exec(html);
