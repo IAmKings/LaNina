@@ -16,6 +16,10 @@ class FakeRepository implements DailyPublicationTargetRepository {
   findCutoffVersions(): Promise<readonly CutoffThesisVersion[]> {
     return Promise.resolve(this.versions);
   }
+
+  findPreviousBriefFacts(): Promise<null> {
+    return Promise.resolve(null);
+  }
 }
 
 function publishedVersions(overrides: Partial<Record<string, Partial<CutoffThesisVersion>>> = {}) {
@@ -25,6 +29,10 @@ function publishedVersions(overrides: Partial<Record<string, Partial<CutoffThesi
     version: 2,
     status: "published" as const,
     isLatest: true,
+    direction: "bullish",
+    stage: "market_confirmed",
+    confidence: 69,
+    summary: "seed template summary",
     ...(overrides[thesisId] ?? {}),
   }));
 }
@@ -53,13 +61,33 @@ describe("DailyPublicationTargetModule", () => {
 
     const duplicate = await resolve([
       ...publishedVersions(),
-      { thesisId: "ENSO-CORE-01", thesisVersionId: "version-extra", version: 2, status: "published", isLatest: true },
+      {
+        thesisId: "ENSO-CORE-01",
+        thesisVersionId: "version-extra",
+        version: 2,
+        status: "published",
+        isLatest: true,
+        direction: "bullish",
+        stage: "market_confirmed",
+        confidence: 69,
+        summary: "seed template summary",
+      },
     ]);
     expect(duplicate.blockers).toEqual(["TARGET_DUPLICATE:ENSO-CORE-01"]);
 
     const unknown = await resolve([
       ...publishedVersions(),
-      { thesisId: "SUGAR-01", thesisVersionId: "version-sugar", version: 1, status: "published", isLatest: true },
+      {
+        thesisId: "SUGAR-01",
+        thesisVersionId: "version-sugar",
+        version: 1,
+        status: "published",
+        isLatest: true,
+        direction: "bearish",
+        stage: "easing",
+        confidence: 55,
+        summary: "unknown thesis summary",
+      },
     ]);
     expect(unknown.blockers).toEqual(["UNKNOWN_THESIS:SUGAR-01"]);
   });
@@ -80,6 +108,10 @@ describe("DailyPublicationTargetModule", () => {
       thesisVersionId: `version-${index + 1}`,
       version: thesisId === "RUBBER-TH-01" ? 3 : 2,
       status: thesisId === "RUBBER-TH-01" ? "draft" : "published",
+      direction: "bullish",
+      stage: "market_confirmed",
+      confidence: 69,
+      summary: "seed template summary",
     })));
     // Candidates are a display projection only: the freeze pool still excludes the draft.
     expect(draft.resolvableTargets.map((target) => target.thesisId))
@@ -94,5 +126,15 @@ describe("DailyPublicationTargetModule", () => {
       .rejects.toBeInstanceOf(DailyPublicationTargetError);
     await expect(module.resolve("2026-09-10T22:30:00Z"))
       .rejects.toMatchObject({ code: "VALIDATION" });
+  });
+
+  it("refuses a malformed brief date before consulting storage", async () => {
+    const module = new DailyPublicationTargetModule(new FakeRepository(publishedVersions()));
+
+    await expect(module.findPreviousBriefFacts("2026-9-11"))
+      .rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(module.findPreviousBriefFacts("2026-02-30"))
+      .rejects.toMatchObject({ code: "VALIDATION" });
+    await expect(module.findPreviousBriefFacts("2026-09-11")).resolves.toBeNull();
   });
 });

@@ -33,6 +33,7 @@ describe("manual source run module", () => {
       sourceId: target.sourceId,
       sourceUrl: target.sourceUrl,
       scheduledAt: "2026-09-10T01:00:00.000Z",
+      forceReparse: false,
     }, adapter);
     expect(first).toMatchObject({ status: "completed", replayed: false, run: { id: "run-safe", errorCode: null } });
     expect(replay).toMatchObject({ status: "completed", replayed: true, operationId: "operation-1" });
@@ -109,6 +110,7 @@ function memoryRepository(source: EnabledManualSource | null): ManualSourceRunRe
   return {
     audit,
     findEnabledSource: async () => source,
+    findEnabledSourceIds: async () => [],
     begin: async (operation) => {
       const existing = operations.get(operation.idempotencyKey);
       if (existing !== undefined) return { operation: existing, created: false };

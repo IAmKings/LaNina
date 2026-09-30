@@ -227,6 +227,10 @@ function resolution(options: { readonly exemptible: boolean }): DailyPublication
       ...target,
       version: 2,
       status: "published" as const,
+      direction: null,
+      stage: null,
+      confidence: null,
+      summary: null,
     })),
     exemptibleTargets: options.exemptible
       ? [{

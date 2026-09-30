@@ -172,10 +172,18 @@ export function createHttpSourceAdapter<TBody = string>(
 
       let response: Response;
       try {
+        // 观测是时效敏感事实：显式要求 Cloudflare 边缘对该子请求不做缓存
+        //（cacheTtl: 0）。2026-09 实测 NOAA RONI 页在子请求路径上被边缘缓存约 7 个月，
+        // 签字阈值因此按陈旧数据评估。注意 cache: "no-store" 与 cf.cacheTtl 组合会被
+        // workerd 拒绝（二者不兼容），故只保留 cf 形态。
         response = await fetchWithinTimeout(
           context.fetch,
           plan.url,
-          { headers, redirect: config.redirect },
+          {
+            cf: { cacheTtl: 0, cacheEverything: false },
+            headers,
+            redirect: config.redirect,
+          },
           { timeoutMs: config.timeoutMs },
         );
       } catch (error) {

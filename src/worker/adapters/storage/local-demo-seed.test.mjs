@@ -128,6 +128,16 @@ describe("local demo publication seed", () => {
     expect(targets.targets).toHaveLength(6);
     expect(targets.blockers).toEqual([]);
 
+    // 一键发布的差值陈述输入：briefDate 之前最近一期已发布简报（真实 schema 上三表联查）。
+    const publicationTargets = new D1DailyPublicationTargetRepository(d1);
+    const previous = await publicationTargets.findPreviousBriefFacts("2026-09-12");
+    expect(previous).not.toBeNull();
+    expect(previous.headline).toContain("合成演示：");
+    expect(previous.theses).toHaveLength(6);
+    expect(previous.theses.every((thesis) => typeof thesis.direction === "string")).toBe(true);
+    expect(previous.theses.every((thesis) => Number.isFinite(thesis.confidence))).toBe(true);
+    await expect(publicationTargets.findPreviousBriefFacts("2026-09-11")).resolves.toBeNull();
+
     const feed = await new D1AtomFeedRepository(d1).feed(GENERATED_AT);
     expect(feed.changes.length).toBeGreaterThan(0);
     expect(feed.dailyBriefs.map((brief) => brief.briefDate)).toContain("2026-09-11");

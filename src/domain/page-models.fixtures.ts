@@ -208,6 +208,7 @@ const fixtures: PageModelFixtures = {
   },
   adminRuns: {
     actor: { email: "researcher@example.test", roles: ["viewer", "editor"] },
+    runnableSources: ["noaa_cpc_roni"],
     runs: [{
       id: "run-noaa-1",
       sourceId: "noaa_cpc_roni",

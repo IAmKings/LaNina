@@ -17,6 +17,9 @@ export interface RunSourceRequest {
   sourceUrl: string;
   scheduledAt: string;
   nextDueAt?: string | null;
+  /** 强制重新解析：忽略上游内容哈希游标，即使 body 未变也完整走解析与观测比对。
+   *  用于解析器修复后让同一页面重新入库（观测级幂等仍由 (indicator, observed_at) 保证）。 */
+  readonly forceReparse?: boolean;
 }
 
 export interface RunSourceDependencies {
@@ -137,14 +140,16 @@ async function collectAndPersist(
   const { runId, retryCount, expectedRetryCount, retryClaimToken, attemptStartedAt } = lease;
   const now = dependencies.now ?? (() => new Date().toISOString());
   try {
-    const cursor = await dependencies.repository.findSourceCursor(request.sourceId);
+    const cursor = request.forceReparse === true
+      ? null
+      : await dependencies.repository.findSourceCursor(request.sourceId);
     const fetchedAt = now();
     const result = await dependencies.adapter.collect({
       ...request,
       fetchedAt,
-      previousEtag: cursor.etag,
-      previousLastModified: cursor.lastModified,
-      previousContentHash: cursor.contentHash,
+      previousEtag: cursor?.etag ?? null,
+      previousLastModified: cursor?.lastModified ?? null,
+      previousContentHash: cursor?.contentHash ?? null,
       fetch: dependencies.fetch,
     });
 

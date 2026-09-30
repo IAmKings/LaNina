@@ -3,6 +3,8 @@ import type { RunSourceOutcome, RunSourceRequest } from "../ingestion/run-source
 import type { CodeOwnedSourceTarget } from "../ingestion/live-smoke-targets";
 
 export interface ManualSourceRunInput {
+  /** 强制重新解析（忽略内容哈希游标）——解析器修复后让同一页面重新入库。 */
+  readonly forceReparse?: boolean;
   readonly sourceId: string;
   readonly reason: string;
   readonly idempotencyKey: string;
@@ -31,6 +33,8 @@ export interface ManualSourceRunOperation {
 
 export interface ManualSourceRunRepository {
   findEnabledSource(sourceId: string): Promise<EnabledManualSource | null>;
+  /** 手动触发页的来源选择清单：全部 enabled 来源，稳定排序。 */
+  findEnabledSourceIds(): Promise<readonly string[]>;
   begin(operation: ManualSourceRunInput): Promise<{
     readonly operation: ManualSourceRunOperation;
     readonly created: boolean;
@@ -85,6 +89,11 @@ export class ManualSourceRunModule {
     private readonly runner: ManualSourceRunner,
   ) {}
 
+  /** 手动触发页的来源选择清单（透传仓储）。 */
+  findEnabledSourceIds(): Promise<readonly string[]> {
+    return this.repository.findEnabledSourceIds();
+  }
+
   async run(input: ManualSourceRunInput): Promise<ManualSourceRunResult> {
     const source = await this.repository.findEnabledSource(input.sourceId);
     if (source === null) throw new ManualSourceRunError("SOURCE_UNAVAILABLE");
@@ -109,6 +118,7 @@ export class ManualSourceRunModule {
         sourceId: source.id,
         sourceUrl: target.sourceUrl,
         scheduledAt: input.occurredAt,
+        forceReparse: input.forceReparse === true,
       }, adapter);
     } catch {
       // No unclassified dispatch failure may be reported as a successful operation.

@@ -1,6 +1,7 @@
 import type { ApiEnvelope } from "../domain/contracts";
 import type { AdminDailyPageModel, AdminDailyReviewObligationModel } from "../domain/page-models";
 
+import { directionLabelText, stageLabelText } from "./overview-view";
 import { formatShanghaiTime } from "./shanghai-time";
 
 export const MAX_TOP_CHANGES = 3;
@@ -18,9 +19,11 @@ export function adminDailyControlsBusy(
   batch: AdminDailyOperationStatus,
   review: AdminDailyOperationStatus,
   preflightLoading: boolean,
+  oneClick: AdminDailyOperationStatus = "editing",
 ): boolean {
   return submit === "submitting" || submit === "success"
     || batch === "submitting" || review === "submitting"
+    || oneClick === "submitting" || oneClick === "success"
     || preflightLoading;
 }
 
@@ -74,6 +77,21 @@ export function mayPublishDaily(model: AdminDailyPageModel): boolean {
 export function dailyUncoveredBlockers(model: AdminDailyPageModel): readonly string[] {
   const exemptible = new Set(model.exemptibleTargets.map((target) => target.thesisId));
   return model.blockers.filter((blocker) => !blockerCoveredByExemption(blocker, exemptible));
+}
+
+/** 一键按钮的可用性前提：当前截止时间必须存在带版本事实的候选行。 */
+export function oneClickUnavailableReason(model: AdminDailyPageModel): string | null {
+  if (model.published) return "该日期的每日判定已发布且不可替换。";
+  if (model.targets.length === 0) {
+    return "当前截止时间没有任何评估版本：每日评估被阻断（如研究签字、派生失败）或尚未运行。";
+  }
+  const factTargets = model.targets.filter(
+    (target) => target.direction !== null && target.stage !== null && target.confidence !== null,
+  );
+  if (factTargets.length === 0) {
+    return "当前截止时间的候选版本均缺少方向/阶段/置信度事实，无法生成结构化文案。";
+  }
+  return null;
 }
 
 /** Null means the manual publication form may be offered. */
@@ -208,6 +226,103 @@ export function dailyPublishRequestBody(
     confirm: true,
     exemptions: model.exemptibleTargets.map(({ thesisId, gapId }) => ({ thesisId, gapId })),
   };
+}
+
+/**
+ * 一键发布的审计原因默认值：明确声明文案由模板生成、门禁由服务端校验。
+ */
+export const ONE_CLICK_REASON = "一键发布：模板生成结构化事实文案，四类门禁由服务端校验";
+
+export interface OneClickBriefCopy {
+  readonly headline: string;
+  readonly summary: string;
+  readonly reason: string;
+}
+
+/**
+ * 从预检事实模板生成每日判定的 headline/summary（PRD 治理：只允许结构化事实与模板化摘要，
+ * 禁止因果式表述——本函数只陈述方向/阶段/置信度及其相对上期的差值，绝不推断原因）。
+ * 豁免论点以预检的 exemptibleTargets 为准（与发布请求的 exemptions 完全一致），绝不渲染其
+ * 方向/阶段/置信度——候选行即使带有 draft/withdrawn 版本事实，豁免契约也不发布它们。
+ * 所有非豁免 target 都没有版本事实（如全部未评估）时返回 null，调用方不得凭空发布。
+ */
+export function buildOneClickBriefCopy(model: AdminDailyPageModel): OneClickBriefCopy | null {
+  const exemptedIds = new Set(model.exemptibleTargets.map((target) => target.thesisId));
+  const factTargets = model.targets.filter(
+    (target) => !exemptedIds.has(target.thesisId)
+      && target.direction !== null && target.stage !== null && target.confidence !== null,
+  );
+  if (factTargets.length === 0) return null;
+  const previousByThesis = new Map(
+    (model.previousBrief?.theses ?? []).map((thesis) => [thesis.thesisId, thesis]),
+  );
+  let directionChanges = 0;
+  let stageChanges = 0;
+  const lines = model.targets.map((target) => {
+    if (exemptedIds.has(target.thesisId)) {
+      return `${target.thesisId}：数据覆盖不足，已按已确认豁免发布（不显示方向与置信度）`;
+    }
+    if (target.direction === null || target.stage === null || target.confidence === null) {
+      // 值域内不应出现（thesis_versions 事实列为 NOT NULL）；防御性如实标注，绝不虚构方向。
+      return `${target.thesisId}：版本事实缺失，未计入方向统计`;
+    }
+    const previous = previousByThesis.get(target.thesisId);
+    const base = `${target.thesisId}：方向 ${directionLabelText(target.direction)}`
+      + `（${stageLabelText(target.stage)}，置信度 ${target.confidence}）`;
+    if (previous === undefined) return `${base}，首次发布`;
+    const diffs: string[] = [];
+    if (previous.direction !== null && previous.direction !== target.direction) {
+      directionChanges += 1;
+      diffs.push(`方向 ${directionLabelText(previous.direction)}→${directionLabelText(target.direction)}`);
+    }
+    if (previous.stage !== null && previous.stage !== target.stage) {
+      stageChanges += 1;
+      diffs.push(`阶段 ${stageLabelText(previous.stage)}→${stageLabelText(target.stage)}`);
+    }
+    if (previous.confidence !== null && previous.confidence !== target.confidence) {
+      diffs.push(`置信度 ${previous.confidence}→${target.confidence}`);
+    }
+    return diffs.length === 0 ? `${base}，较上期持平` : `${base}，较上期${diffs.join("、")}`;
+  });
+  const tail = model.previousBrief === null
+    ? "首次发布"
+    : `较上期方向变化 ${directionChanges} 条、阶段变化 ${stageChanges} 条`;
+  const headline = truncate(
+    `每日判定（${model.briefDate}）：方向可用 ${factTargets.length}/${model.targets.length}，${tail}`,
+    200,
+  );
+  const summary = truncate(lines.join("；"), 2_000);
+  return { headline, summary, reason: ONE_CLICK_REASON };
+}
+
+function truncate(value: string, maximumLength: number): string {
+  const characters = [...value];
+  return characters.length <= maximumLength ? value : characters.slice(0, maximumLength).join("");
+}
+
+/**
+ * 一键链路的逐步状态。任一步失败即停止后续步骤；skipped 表示该步在当前预检下无事可做
+ * （例如没有 draft 论点版本、没有待审核转场）。
+ */
+export type OneClickStepId = "versions" | "reviews" | "preflight" | "brief";
+
+export interface OneClickStepStatus {
+  readonly id: OneClickStepId;
+  readonly label: string;
+  readonly state: "pending" | "running" | "done" | "skipped" | "failed";
+  readonly detail: string | null;
+}
+
+export function initialOneClickSteps(
+  draftCount: number,
+  reviewCount: number,
+): readonly OneClickStepStatus[] {
+  return [
+    { id: "versions", label: "发布 draft 论点版本", state: draftCount === 0 ? "skipped" : "pending", detail: null },
+    { id: "reviews", label: "记录高风险转场审核", state: reviewCount === 0 ? "skipped" : "pending", detail: null },
+    { id: "preflight", label: "刷新预检（并发令牌与目标版本）", state: "pending", detail: null },
+    { id: "brief", label: "提交每日判定（模板文案）", state: "pending", detail: null },
+  ];
 }
 
 /**

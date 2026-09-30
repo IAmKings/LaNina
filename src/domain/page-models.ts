@@ -242,6 +242,8 @@ export interface AdminRunsPageModel {
   readonly actor: { readonly email: string; readonly roles: readonly AdminRole[] };
   readonly runs: readonly AdminRunModel[];
   readonly nextCursor: string | null;
+  /** 手动触发采集的来源选择清单（全部 enabled 来源，稳定排序）。 */
+  readonly runnableSources: readonly string[];
 }
 
 /**
@@ -285,6 +287,23 @@ export interface AdminDailyTargetModel {
   readonly thesisVersionId: string;
   readonly version: number;
   readonly status: "draft" | "published" | "withdrawn";
+  /** 一键发布模板的版本事实（展示用；冻结目标仍由服务端在发布时解析）。 */
+  readonly direction: string | null;
+  readonly stage: string | null;
+  readonly confidence: number | null;
+  readonly summary: string | null;
+}
+
+/** 上期已发布每日判定：一键发布的差值陈述与文案参照输入（无上期时为 null）。 */
+export interface AdminPreviousBriefModel {
+  readonly headline: string;
+  readonly summary: string;
+  readonly theses: readonly {
+    readonly thesisId: string;
+    readonly direction: string | null;
+    readonly stage: string | null;
+    readonly confidence: number | null;
+  }[];
 }
 
 /**
@@ -325,4 +344,5 @@ export interface AdminDailyPageModel {
   readonly blockers: readonly string[];
   readonly exemptibleTargets: readonly AdminDailyExemptionTargetModel[];
   readonly pendingReviews: readonly AdminDailyReviewObligationModel[];
+  readonly previousBrief: AdminPreviousBriefModel | null;
 }

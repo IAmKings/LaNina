@@ -7,7 +7,15 @@ import { chartPointSymbol } from "./indicator-markers";
 import { isAbort } from "./is-abort";
 import { directionLabel, stageLabel } from "./overview-view";
 import { formatShanghaiTime } from "./shanghai-time";
-import { evidenceQualityLabel, evidenceStanceLabel, transmissionStages } from "./thesis-view";
+import {
+  evidenceQualityLabel,
+  evidenceStanceLabel,
+  newestFirstEvidence,
+  newestFirstPoints,
+  EVIDENCE_VISIBLE_ITEMS,
+  INDICATOR_TABLE_VISIBLE_ROWS,
+  transmissionStages,
+} from "./thesis-view";
 
 type ThesisState =
   | { readonly status: "loading" }
@@ -103,26 +111,7 @@ export function ThesisDetail({ model }: { model: ThesisPageModel }) {
                 <h3>{series.name} <span>{series.unit}</span></h3>
                 <IndicatorChart series={series} />
                 {series.missingReason === null ? null : <p className="indicator-missing-reason">缺失说明：{series.missingReason}</p>}
-                <table>
-                  <caption>图表对应的完整公开指标数据表</caption>
-                  <thead><tr><th scope="col">时间口径</th><th scope="col">数值</th><th scope="col">质量</th><th scope="col">来源</th></tr></thead>
-                  <tbody>{series.points.map((point) => (
-                    <tr className={chartPointSymbol(point) === null ? undefined : "is-marked"} key={`${point.observedAt}-${point.revision}`}>
-                      <td>
-                        <span>
-                          {chartPointSymbol(point) === null ? null : (
-                            <span aria-hidden="true" className="indicator-marker">{chartPointSymbol(point)} </span>
-                          )}
-                          观测 {formatShanghaiTime(point.observedAt)}
-                        </span>
-                        <span className="indicator-time-detail">发布 {formatShanghaiTime(point.times.publishedAt)} · 采集 {formatShanghaiTime(point.times.fetchedAt)}</span>
-                      </td>
-                      <td>{point.value === null ? "缺失" : `${point.value} ${point.unit}`}</td>
-                      <td>{evidenceQualityLabel(point.quality, point.revision)}</td>
-                      <td><a href={point.source.citationUrl} rel="noreferrer" target="_blank">{point.source.name}</a></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
+                <IndicatorDataTable series={series} />
               </article>
             ))}
           </div>
@@ -157,21 +146,86 @@ export function ThesisDetail({ model }: { model: ThesisPageModel }) {
   );
 }
 
+function IndicatorDataTable({ series }: { series: ThesisPageModel["indicators"][number] }) {
+  const ordered = newestFirstPoints(series.points);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded || ordered.length <= INDICATOR_TABLE_VISIBLE_ROWS
+    ? ordered
+    : ordered.slice(0, INDICATOR_TABLE_VISIBLE_ROWS);
+  const collapsible = ordered.length > INDICATOR_TABLE_VISIBLE_ROWS;
+  const tbodyId = `${series.id}-data-rows`;
+  return (
+    <>
+      <table>
+        <caption>图表对应的完整公开指标数据表</caption>
+        <thead><tr><th scope="col">时间口径</th><th scope="col">数值</th><th scope="col">质量</th><th scope="col">来源</th></tr></thead>
+        <tbody id={tbodyId}>{visible.map((point) => (
+          <tr className={chartPointSymbol(point) === null ? undefined : "is-marked"} key={`${point.observedAt}-${point.revision}`}>
+            <td>
+              <span>
+                {chartPointSymbol(point) === null ? null : (
+                  <span aria-hidden="true" className="indicator-marker">{chartPointSymbol(point)} </span>
+                )}
+                观测 {formatShanghaiTime(point.observedAt)}
+              </span>
+              <span className="indicator-time-detail">发布 {formatShanghaiTime(point.times.publishedAt)} · 采集 {formatShanghaiTime(point.times.fetchedAt)}</span>
+            </td>
+            <td>{point.value === null ? "缺失" : `${point.value} ${point.unit}`}</td>
+            <td>{evidenceQualityLabel(point.quality, point.revision)}</td>
+            <td><a href={point.source.citationUrl} rel="noreferrer" target="_blank">{point.source.name}</a></td>
+          </tr>
+        ))}</tbody>
+      </table>
+      {collapsible ? (
+        <button
+          aria-controls={tbodyId}
+          aria-expanded={expanded}
+          className="admin-action-button"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          {expanded ? "收起数据表" : `显示全部 ${ordered.length} 行数据`}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 function EvidenceColumn({ heading, evidence }: { heading: string; evidence: readonly ThesisEvidenceModel[] }) {
+  const ordered = newestFirstEvidence(evidence);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded || ordered.length <= EVIDENCE_VISIBLE_ITEMS
+    ? ordered
+    : ordered.slice(0, EVIDENCE_VISIBLE_ITEMS);
+  const collapsible = ordered.length > EVIDENCE_VISIBLE_ITEMS;
+  const listId = `${heading}-evidence-list`;
   return (
     <section className="content-section evidence-column" aria-labelledby={`${heading}-heading`}>
       <p className="eyebrow">{heading === "支持证据" ? "supports" : "counterevidence"}</p>
       <h2 id={`${heading}-heading`}>{heading}</h2>
       {evidence.length === 0 ? <p className="muted">当前公开版本未包含此类证据。</p> : (
-        <ol className="evidence-list">{evidence.map((item, index) => (
-          <li key={`${item.source.citationUrl}-${index}`}>
-            <p className="evidence-type">{evidenceStanceLabel(item.stance)} · {item.layer}</p>
-            <p>{item.summary}</p>
-            {item.valueLabel === null ? null : <p className="evidence-value">{item.valueLabel}</p>}
-            <p className="muted"><a href={item.source.citationUrl} rel="noreferrer" target="_blank">{item.source.name}</a> · {evidenceQualityLabel(item.quality, item.revision)}</p>
-            <p className="muted">观测 {formatShanghaiTime(item.times.observedAt)} · 发布 {formatShanghaiTime(item.times.publishedAt)} · 采集 {formatShanghaiTime(item.times.fetchedAt)}</p>
-          </li>
-        ))}</ol>
+        <>
+          <ol className="evidence-list" id={listId}>{visible.map((item, index) => (
+            <li key={`${item.source.citationUrl}-${index}`}>
+              <p className="evidence-type">{evidenceStanceLabel(item.stance)} · {item.layer}</p>
+              <p>{item.summary}</p>
+              {item.valueLabel === null ? null : <p className="evidence-value">{item.valueLabel}</p>}
+              <p className="muted"><a href={item.source.citationUrl} rel="noreferrer" target="_blank">{item.source.name}</a> · {evidenceQualityLabel(item.quality, item.revision)}</p>
+              <p className="muted">观测 {formatShanghaiTime(item.times.observedAt)} · 发布 {formatShanghaiTime(item.times.publishedAt)} · 采集 {formatShanghaiTime(item.times.fetchedAt)}</p>
+            </li>
+          ))}</ol>
+          {collapsible ? (
+            <button
+              aria-controls={listId}
+              aria-expanded={expanded}
+              className="admin-action-button"
+              onClick={() => setExpanded((value) => !value)}
+              type="button"
+            >
+              {expanded ? "收起证据列表" : `查看全部 ${ordered.length} 条证据`}
+            </button>
+          ) : null}
+        </>
       )}
     </section>
   );

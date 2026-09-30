@@ -24,10 +24,35 @@ export interface CutoffThesisVersion {
   readonly version: number;
   readonly status: "draft" | "published" | "withdrawn";
   readonly isLatest: boolean;
+  /** 一键发布模板所需的版本事实（草稿/发布版均有；缺列为 null，fail-open 仅为展示）。 */
+  readonly direction: string | null;
+  readonly stage: string | null;
+  readonly confidence: number | null;
+  readonly summary: string | null;
+}
+
+/** 上期已发布简报中单条论点的方向/阶段/置信度事实（一键发布的差值陈述输入）。 */
+export interface VersionBriefFact {
+  readonly thesisId: string;
+  readonly direction: string | null;
+  readonly stage: string | null;
+  readonly confidence: number | null;
+}
+
+/**
+ * 上期已发布简报（brief_date 之前最近的一期 published）：一键发布差值陈述的对照基准。
+ * 该日期之前没有任何已发布简报时，仓库返回 null（模板进入“首次发布”态）。
+ */
+export interface PreviousBriefFacts {
+  readonly headline: string;
+  readonly summary: string;
+  readonly theses: readonly VersionBriefFact[];
 }
 
 export interface DailyPublicationTargetRepository {
   findCutoffVersions(cutoff: string): Promise<readonly CutoffThesisVersion[]>;
+  /** 取 briefDate 之前最近一期已发布简报的文案与各论点冻结时的方向/阶段/置信度事实。 */
+  findPreviousBriefFacts(briefDate: string): Promise<PreviousBriefFacts | null>;
 }
 
 /**
@@ -51,6 +76,11 @@ export interface DailyBriefCandidateTarget {
   readonly thesisVersionId: string;
   readonly version: number;
   readonly status: "draft" | "published" | "withdrawn";
+  /** 一键发布模板的版本事实（仅展示用，冻结目标仍由服务端在发布时解析）。 */
+  readonly direction: string | null;
+  readonly stage: string | null;
+  readonly confidence: number | null;
+  readonly summary: string | null;
 }
 
 export interface DailyPublicationTargetResolution {
@@ -79,6 +109,22 @@ export interface DailyPublicationTargetResolution {
  */
 export class DailyPublicationTargetModule {
   constructor(private readonly repository: DailyPublicationTargetRepository) {}
+
+  /**
+   * 一键发布的差值陈述输入：briefDate 之前最近一期已发布简报的文案与冻结事实。
+   * 与高风险转场审核的对照基准一致（MAX(published brief_date) < briefDate），
+   * 而不是该日期自身的简报——一键发布只在当日尚未发布时可用。
+   */
+  async findPreviousBriefFacts(briefDate: string): Promise<PreviousBriefFacts | null> {
+    if (typeof briefDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(briefDate)) {
+      throw new DailyPublicationTargetError("VALIDATION", "briefDate 必须是 YYYY-MM-DD");
+    }
+    const parsed = new Date(`${briefDate}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== briefDate) {
+      throw new DailyPublicationTargetError("VALIDATION", "briefDate 必须是有效日期");
+    }
+    return this.repository.findPreviousBriefFacts(briefDate);
+  }
 
   async resolve(cutoff: string): Promise<DailyPublicationTargetResolution> {
     const canonical = canonicalUtc(cutoff);
@@ -122,6 +168,10 @@ export class DailyPublicationTargetModule {
           thesisVersionId: match.thesisVersionId,
           version: match.version,
           status: match.status,
+          direction: match.direction,
+          stage: match.stage,
+          confidence: match.confidence,
+          summary: match.summary,
         });
       }
 

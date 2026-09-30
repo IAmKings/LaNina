@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CollectContext } from "../../../domain/ingestion";
 import invalidHtml from "./fixtures/noaa-roni-invalid.html?raw";
+import unclosedLastRowHtml from "./fixtures/noaa-roni-unclosed-last-row.html?raw";
 import normalHtml from "./fixtures/noaa-roni-normal.html?raw";
 import { defineAdapterContract } from "./testing/adapter-contract";
 import {
@@ -86,6 +87,33 @@ defineAdapterContract({
 });
 
 describe("NOAA RONI adapter behavior", () => {
+  it("emits SOURCE_CONTENT_STALE when the latest season lags the fetch by more than 120 days", async () => {
+    // 页面冻结在 NDJ 2025（2026-09 实测的 staging 真实状态）：
+    // 去掉 2026 行后，最新季节期末为 2026-01-31（NDJ 季节止于次年 1 月末），
+    // 相对 2026-09-29 采集滞后约 241 天。
+    const stalePage = normalHtml.replace(/<tr id="latest-data">[\s\S]*?<\/tr>/, "");
+    expect(parseRoniHtml(stalePage).at(-1)?.observedAt).toBe("2026-01-31T00:00:00.000Z");
+
+    const result = await noaaRoniAdapter.collect({
+      ...baseContext,
+      fetchedAt: "2026-09-29T00:00:01.000Z",
+      scheduledAt: "2026-09-29T00:00:00.000Z",
+      fetch: vi.fn(async () => htmlResponse(stalePage)),
+    });
+
+    expect(result.status).toBe("changed");
+    expect(result.warnings.some((warning) => warning.startsWith("SOURCE_CONTENT_STALE"))).toBe(true);
+  });
+
+  it("emits no staleness warning when the latest season is within 120 days", async () => {
+    const result = await noaaRoniAdapter.collect({
+      ...baseContext,
+      fetch: vi.fn(async () => htmlResponse(normalHtml)),
+    });
+
+    expect(result.warnings.some((warning) => warning.startsWith("SOURCE_CONTENT_STALE"))).toBe(false);
+  });
+
   it("keeps full parsing available but emits only the latest 24 automatic observations", async () => {
     const oldRow = `<tr><th>2024</th>${Array.from({ length: 12 }, () => "<td>0.1</td>").join("")}</tr>`;
     const longHistory = normalHtml.replace("<tbody>", `<tbody>${oldRow}`);
@@ -115,6 +143,15 @@ describe("NOAA RONI adapter behavior", () => {
     expect(second.status).toBe("unchanged");
     expect(second.observations).toEqual([]);
     expect(second.rawBody).toBeNull();
+  });
+
+  it("parses the live-page malformed last row that lacks its closing </tr>", async () => {
+    // 2026-09 实测：CPC 实时页面的最新一年行（id="latest-data"）缺少闭合 </tr>，
+    // 按完整配对匹配会静默丢弃整年数据且无 SCHEMA_DRIFT。
+    const values = parseRoniHtml(unclosedLastRowHtml);
+    const year2026 = values.filter((value) => value.year === 2026);
+    expect(year2026.map((value) => value.value)).toEqual([-0.9, -0.8, -0.4, 0.0, 0.5, 1.0, 1.4]);
+    expect(year2026.at(-1)?.observedAt).toBe("2026-08-31T00:00:00.000Z");
   });
 
   it("classifies invalid UTF-8 bytes as SCHEMA_DRIFT instead of lossily decoding", async () => {

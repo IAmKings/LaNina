@@ -41,6 +41,23 @@ export class D1ManualSourceRunRepository implements ManualSourceRunRepository {
     }
   }
 
+  async findEnabledSourceIds(): Promise<readonly string[]> {
+    try {
+      const result = await this.database.prepare(
+        `SELECT id FROM sources WHERE enabled = 1 ORDER BY id`,
+      ).all<Record<string, unknown>>();
+      if (result.success !== true || !Array.isArray(result.results)) throw databaseError();
+      return result.results.map((row) => {
+        const id = row.id;
+        if (typeof id !== "string") throw databaseError();
+        return id;
+      });
+    } catch (error) {
+      reportStorageFailure("manual-source-runs.findEnabledSourceIds", error);
+      throw databaseError();
+    }
+  }
+
   async begin(input: {
     readonly sourceId: string;
     readonly reason: string;

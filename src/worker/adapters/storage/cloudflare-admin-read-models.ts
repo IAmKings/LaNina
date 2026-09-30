@@ -67,6 +67,8 @@ export class D1AdminReadModelRepository implements AdminReadModelRepository {
         },
         runs: page,
         nextCursor: decoded.length > ADMIN_RUNS_PAGE_SIZE ? encodeCursor(page.at(-1)!) : null,
+        // 手动触发页的来源清单由路由层经 manualSourceRuns 仓储装配并覆盖此占位。
+        runnableSources: [],
       });
     } catch (error) {
       if (error instanceof AdminReadModelStorageError) throw error;

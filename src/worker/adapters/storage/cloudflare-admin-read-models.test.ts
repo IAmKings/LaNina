@@ -28,6 +28,7 @@ describe("D1AdminReadModelRepository", () => {
         safeErrorCode: "NETWORK",
       }],
       nextCursor: null,
+      runnableSources: [],
     });
     expect(JSON.stringify(result)).not.toMatch(/private|stack|snapshot|message/i);
   });

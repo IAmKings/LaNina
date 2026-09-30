@@ -3,6 +3,7 @@ import type {
   AdminDailyExemptionTargetModel,
   AdminDailyReviewObligationModel,
   AdminDailyTargetModel,
+  AdminPreviousBriefModel,
   AdminDraftPageModel,
   AdminRole,
   AdminRunsPageModel,
@@ -135,6 +136,7 @@ export interface AdminDailyBriefRead {
   readonly blockers: readonly string[];
   readonly exemptibleTargets: readonly AdminDailyExemptionTargetModel[];
   readonly pendingReviews: readonly AdminDailyReviewObligationModel[];
+  readonly previousBrief: AdminPreviousBriefModel | null;
 }
 export type AdminDailyBriefReadFromBindings = (
   briefDate: string,
@@ -168,6 +170,7 @@ export interface RequestHandlerDependencies {
   adminDraft?: AdminDraftFromBindings;
   authorizeAdmin?: AuthorizeAdminFromBindings;
   manualSourceRun?: ManualSourceRunFromBindings;
+  runnableSourceIds?: () => Promise<readonly string[]>;
   administrativeDraftEdit?: AdministrativeDraftEditFromBindings;
   thesisPublication?: ThesisPublicationFromBindings;
   thesisChangeReview?: ThesisChangeReviewFromBindings;

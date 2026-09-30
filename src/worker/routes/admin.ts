@@ -211,10 +211,14 @@ async function adminDailyBriefFromCloudflareBindings(
   const app = AppContext.from(env);
   const repository = app.dailyBriefRepository();
   const briefs = app.dailyBriefs();
-  const [published, currentFreezeKey, targets] = await Promise.all([
+  const [published, currentFreezeKey, targets, previousBrief] = await Promise.all([
     briefs.findPublished(briefDate),
     briefs.currentFreezeKey(briefDate),
     dailyPublicationTargetsFromCloudflareBindings(cutoff, env),
+    // 一键发布的差值陈述输入：briefDate 之前最近一期已发布简报的文案与各论点冻结时的
+    // 方向/阶段/置信度（与高风险转场审核的对照基准一致）。当日尚未发布时也照常提供，
+    // 否则“较上期”差值态不可达。
+    app.dailyPublicationTargets().findPreviousBriefFacts(briefDate),
   ]);
   const pendingReviews = published !== null
     ? []
@@ -235,6 +239,10 @@ async function adminDailyBriefFromCloudflareBindings(
       thesisVersionId: candidate.thesisVersionId,
       version: candidate.version,
       status: candidate.status,
+      direction: candidate.direction,
+      stage: candidate.stage,
+      confidence: candidate.confidence,
+      summary: candidate.summary,
     })),
     blockers: targets.blockers,
     exemptibleTargets: targets.exemptibleTargets,
@@ -244,6 +252,7 @@ async function adminDailyBriefFromCloudflareBindings(
       beforeVersionId: obligation.beforeVersionId,
       triggers: obligation.triggers,
     })),
+    previousBrief,
   };
 }
 
@@ -263,9 +272,11 @@ export function adminRunsRoute(_request: Request, ctx: RouteContext): Promise<Re
 
     try {
       const runs = await (ctx.dependencies.adminRuns ?? adminRunsFromCloudflareBindings)(adminActor(actor), cursor, ctx.env);
+      const runnableSources = await (ctx.dependencies.runnableSourceIds
+        ?? (() => AppContext.from(ctx.env).manualSourceRuns().findEnabledSourceIds()))();
       const generatedAt = ctx.nowIso();
       return json<AdminRunsPageModel>({
-        data: runs,
+        data: { ...runs, runnableSources },
         meta: pageMeta(generatedAt, generatedAt, "unavailable"),
       });
     } catch (error) {
@@ -719,7 +730,7 @@ export function adminDailyBriefRoute(_request: Request, ctx: RouteContext): Prom
 
 export function manualSourceRunRoute(_request: Request, ctx: RouteContext): Promise<Response> {
   return withAdmin(ctx, "editor", async (actor) => {
-    let body: { readonly reason: string } | null;
+    let body: { readonly reason: string; readonly force: boolean } | null;
     try {
       body = await parseManualSourceRunBody(ctx.request);
     } catch (error) {
@@ -748,6 +759,7 @@ export function manualSourceRunRoute(_request: Request, ctx: RouteContext): Prom
       const result = await (ctx.dependencies.manualSourceRun ?? manualSourceRunFromCloudflareBindings)({
         sourceId: ctx.params.sourceId,
         reason: body.reason,
+        forceReparse: body.force,
         idempotencyKey,
         actor: writer,
         occurredAt,

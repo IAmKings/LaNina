@@ -233,15 +233,23 @@ export async function parseAdministrativeThesisReviewBody(
   }
 }
 
-export async function parseManualSourceRunBody(request: Request): Promise<{ readonly reason: string } | null> {
+export async function parseManualSourceRunBody(
+  request: Request,
+): Promise<{ readonly reason: string; readonly force: boolean } | null> {
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return null;
   try {
     const parsed: unknown = await parseBoundedAdministrativeJson(request);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
-    if (Object.keys(record).length !== 1 || typeof record.reason !== "string") return null;
+    // 键集：reason 必填；force 可选（一键「强制重新解析」——解析器修复后让同一页面重新入库）。
+    const keys = Object.keys(record);
+    if (keys.length !== 1 && keys.length !== 2) return null;
+    if (typeof record.reason !== "string") return null;
+    if (keys.includes("force") && record.force !== true) return null;
     const reason = record.reason.trim();
-    return reason.length >= 1 && reason.length <= 500 ? { reason } : null;
+    return reason.length >= 1 && reason.length <= 500
+      ? { reason, force: record.force === true }
+      : null;
   } catch (error) {
     if (error instanceof AdministrativeBodyTooLargeError) throw error;
     return null;

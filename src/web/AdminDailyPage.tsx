@@ -20,7 +20,11 @@ import {
   dailyUncoveredBlockers,
   gateLabel,
   gateReasonLabel,
+  oneClickUnavailableReason,
+  buildOneClickBriefCopy,
+  initialOneClickSteps,
   mayPublishDaily,
+  ONE_CLICK_REASON,
   emptyDailyPublishDraft,
   isAdminDailyEnvelope,
   parseTopChangeIds,
@@ -33,9 +37,76 @@ import {
   type AdminDailyOperationStatus,
   type DailyGateFailure,
   type DailyPublishDraft,
+  type DailyTargetRow,
+  type OneClickStepId,
+  type OneClickStepStatus,
 } from "./admin-daily-view";
 
 type AdminDailyState = PageLoadState<AdminDailyPageModel>;
+
+/** Loads the admin daily preflight; shared by the page effect and the one-click chain. */
+async function loadAdminDaily(briefDate: string, signal: AbortSignal): Promise<AdminDailyPageModel> {
+  const response = await fetch(`/api/admin/daily/${encodeURIComponent(briefDate)}`, { signal });
+  if (!response.ok) throw new Error("Admin daily request failed");
+  const body = await response.json() as unknown;
+  if (!isAdminDailyEnvelope(body)) throw new Error("Admin daily response is malformed");
+  return body.data;
+}
+
+/** Publishes one draft thesis version; returns a stable error code instead of a server message. */
+async function publishOneThesisVersion(
+  target: DailyTargetRow,
+  reason: string,
+  signal: AbortSignal,
+): Promise<{ readonly ok: boolean; readonly errorCode: string | null }> {
+  const response = await fetch(
+    `/api/admin/thesis-versions/${encodeURIComponent(target.thesisVersionId)}/publish`,
+    {
+      body: JSON.stringify(thesisVersionPublishRequestBody(target, reason)),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+      signal,
+    },
+  );
+  if (response.ok) return { ok: true, errorCode: null };
+  return { ok: false, errorCode: await safeErrorCode(response) ?? String(response.status) };
+}
+
+/** Records one high-risk transition review; same stable-code contract as publishOneThesisVersion. */
+async function recordOneReview(
+  obligation: AdminDailyReviewObligationModel,
+  reason: string,
+  signal: AbortSignal,
+): Promise<{ readonly ok: boolean; readonly errorCode: string | null }> {
+  const response = await fetch(
+    `/api/admin/thesis-versions/${encodeURIComponent(obligation.afterVersionId)}/review`,
+    {
+      body: JSON.stringify(thesisChangeReviewRequestBody(obligation, reason)),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+      signal,
+    },
+  );
+  if (response.ok) return { ok: true, errorCode: null };
+  return { ok: false, errorCode: await safeErrorCode(response) ?? String(response.status) };
+}
+
+/** The one-click chain's step panel state. */
+interface OneClickChainState {
+  readonly status: "idle" | "running" | "done" | "failed";
+  readonly steps: readonly OneClickStepStatus[];
+}
+
+function oneClickStepStateLabel(state: OneClickStepStatus["state"]): string {
+  const labels: Record<OneClickStepStatus["state"], string> = {
+    pending: "待执行",
+    running: "进行中",
+    done: "已完成",
+    skipped: "跳过",
+    failed: "失败",
+  };
+  return labels[state];
+}
 
 interface SubmitState {
   readonly status: AdminDailyOperationStatus;
@@ -54,8 +125,11 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   const [batchReason, setBatchReason] = useState("");
   const [review, setReview] = useState<SubmitState>({ status: "editing", message: null });
   const [reviewReason, setReviewReason] = useState("");
+  const [oneClick, setOneClick] = useState<OneClickChainState>({ status: "idle", steps: [] });
   /** Aborted on unmount so an in-flight batch loop cannot fetch (or write state) into a dead page. */
   const batchAbortRef = useRef<AbortController | null>(null);
+  /** Same unmount semantics for the one-click chain (kept separate so either can be aborted alone). */
+  const oneClickAbortRef = useRef<AbortController | null>(null);
   /**
    * The concurrency token (`currentFreezeKey`) must be current before a publish may be submitted,
    * otherwise a fast retry submits the stale token and fails again with VERSION_CONFLICT. The
@@ -67,12 +141,9 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch(`/api/admin/daily/${encodeURIComponent(briefDate)}`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Admin daily request failed");
-        const body = await response.json() as unknown;
-        if (!isAdminDailyEnvelope(body)) throw new Error("Admin daily response is malformed");
-        setState({ status: "ready", data: body.data });
+    loadAdminDaily(briefDate, controller.signal)
+      .then((data) => {
+        setState({ status: "ready", data });
         setLoadedToken(reloadToken);
       })
       .catch((error: unknown) => {
@@ -84,6 +155,7 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   }, [briefDate, reloadToken]);
 
   useEffect(() => () => batchAbortRef.current?.abort(), []);
+  useEffect(() => () => oneClickAbortRef.current?.abort(), []);
 
   if (state.status === "loading") {
     return <AdminDailyNotice heading="正在取得每日判定预检信息…" briefDate={briefDate} />;
@@ -95,6 +167,7 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   const model = state.data;
   const blockReason = dailyPublishBlockReason(model);
   const uncoveredBlockers = dailyUncoveredBlockers(model);
+  const oneClickReason = oneClickUnavailableReason(model);
   const draftTargets = dailyDraftTargets(model);
   const pendingReviews = model.pendingReviews;
   const changeIds = parseTopChangeIds(draft.topChanges);
@@ -103,7 +176,13 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
   const preflightLoading = state.status === "ready" && loadedToken !== reloadToken;
   // The three operations (publish form, one-click target publishing, review recording) are mutually
   // exclusive: while any of them runs, every other control on the page stays disabled.
-  const busy = adminDailyControlsBusy(submit.status, batch.status, review.status, preflightLoading);
+  const busy = adminDailyControlsBusy(
+    submit.status,
+    batch.status,
+    review.status,
+    preflightLoading,
+    oneClick.status === "running" ? "submitting" : "editing",
+  );
 
   /**
    * 发布该截止时间仍为 draft 的论点版本（服务端逐条重新校验 publisher 权限、版本新鲜度与
@@ -226,6 +305,138 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
     } catch {
       setSubmit({ status: "error", message: "发布操作暂时无法完成，请稍后重试。" });
     }
+  }
+
+  /**
+   * 全链路一键发布：①发布 draft 论点版本 → ②记录转场审核 → ③刷新预检 → ④以模板生成的
+   * 结构化事实文案直接提交每日判定。任一步失败即停止后续步骤；门禁与并发令牌仍由服务端
+   * 全量校验，浏览器只是把预检给出的事实原样回传。
+   */
+  async function runOneClickPublish() {
+    if (busy || blockReason !== null || oneClickReason !== null || !mayPublishDaily(model)) return;
+    const controller = new AbortController();
+    oneClickAbortRef.current = controller;
+    let steps = initialOneClickSteps(draftTargets.length, pendingReviews.length);
+    setOneClick({ status: "running", steps });
+    const setStep = (id: OneClickStepId, patch: { state: OneClickStepStatus["state"]; detail: string | null }) => {
+      steps = steps.map((step) => (step.id === id ? { ...step, ...patch } : step));
+      setOneClick({ status: "running", steps });
+    };
+    const finish = (status: OneClickChainState["status"]) => setOneClick({ status, steps });
+
+    if (draftTargets.length > 0) {
+      setStep("versions", { state: "running", detail: null });
+      const done: string[] = [];
+      const failed: string[] = [];
+      for (const target of draftTargets) {
+        try {
+          const result = await publishOneThesisVersion(target, ONE_CLICK_REASON, controller.signal);
+          if (result.ok) {
+            done.push(target.thesisId);
+            continue;
+          }
+          failed.push(`${target.thesisId}（${result.errorCode ?? "网络"}）`);
+        } catch (error) {
+          if (isAbort(error, controller.signal)) return;
+          failed.push(`${target.thesisId}（网络）`);
+        }
+        setStep("versions", {
+          state: "failed",
+          detail: batchPartialMessage("已发布", done.length, failed, draftTargets.length).message,
+        });
+        finish("failed");
+        return;
+      }
+      setStep("versions", { state: "done", detail: `已发布 ${done.length} 条` });
+    }
+
+    if (pendingReviews.length > 0) {
+      setStep("reviews", { state: "running", detail: null });
+      const done: string[] = [];
+      const failed: string[] = [];
+      for (const obligation of pendingReviews) {
+        try {
+          const result = await recordOneReview(obligation, ONE_CLICK_REASON, controller.signal);
+          if (result.ok) {
+            done.push(obligation.thesisId);
+            continue;
+          }
+          failed.push(`${obligation.thesisId}（${result.errorCode ?? "网络"}）`);
+        } catch (error) {
+          if (isAbort(error, controller.signal)) return;
+          failed.push(`${obligation.thesisId}（网络）`);
+        }
+        setStep("reviews", {
+          state: "failed",
+          detail: batchPartialMessage("已记录", done.length, failed, pendingReviews.length).message,
+        });
+        finish("failed");
+        return;
+      }
+      setStep("reviews", { state: "done", detail: `已记录 ${done.length} 条` });
+    }
+
+    setStep("preflight", { state: "running", detail: null });
+    let fresh: AdminDailyPageModel;
+    try {
+      fresh = await loadAdminDaily(model.briefDate, controller.signal);
+    } catch (error) {
+      if (isAbort(error, controller.signal)) return;
+      setStep("preflight", { state: "failed", detail: "预检刷新失败，请稍后重试。" });
+      finish("failed");
+      return;
+    }
+    setStep("preflight", { state: "done", detail: null });
+    setState({ status: "ready", data: fresh });
+    setLoadedToken(reloadToken);
+
+    setStep("brief", { state: "running", detail: null });
+    const copy = buildOneClickBriefCopy(fresh);
+    if (copy === null) {
+      setStep("brief", { state: "failed", detail: "非豁免论点均无版本事实，无法生成结构化文案。" });
+      finish("failed");
+      return;
+    }
+    const freshBlockReason = dailyPublishBlockReason(fresh);
+    if (freshBlockReason !== null) {
+      setStep("brief", { state: "failed", detail: freshBlockReason });
+      finish("failed");
+      return;
+    }
+    const filled: DailyPublishDraft = {
+      headline: copy.headline,
+      summary: copy.summary,
+      topChanges: "",
+      reason: copy.reason,
+      confirmed: true,
+      exemptionsConfirmed: fresh.exemptibleTargets.length > 0,
+    };
+    try {
+      const response = await fetch(`/api/admin/daily/${encodeURIComponent(fresh.briefDate)}/publish`, {
+        body: JSON.stringify(dailyPublishRequestBody(fresh, filled)),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = await safeDailyPublishError(response);
+        setStep("brief", {
+          state: "failed",
+          detail: dailyPublishFailureMessage(response.status, error.code),
+        });
+        finish("failed");
+        setReloadToken((token) => token + 1);
+        return;
+      }
+    } catch (error) {
+      if (isAbort(error, controller.signal)) return;
+      setStep("brief", { state: "failed", detail: "发布操作暂时无法完成，请稍后重试。" });
+      finish("failed");
+      return;
+    }
+    setStep("brief", { state: "done", detail: "每日判定已发布。" });
+    finish("done");
+    setReloadToken((token) => token + 1);
   }
 
   return (
@@ -407,6 +618,35 @@ export function AdminDailyPage({ briefDate = shanghaiToday() }: { briefDate?: st
               ? null
               : "存在覆盖缺口豁免时，服务端会再次核对缺口真实性与该论点确实没有已发布版本。"}
           </p>
+          <div className="admin-lifecycle-actions">
+            <button
+              className="admin-action-button"
+              disabled={busy || oneClickReason !== null}
+              onClick={runOneClickPublish}
+              type="button"
+            >
+              {oneClick.status === "running" ? "正在执行一键发布…" : "一键发布今日判定"}
+            </button>
+            {oneClickReason === null ? (
+              <p className="admin-daily-hint">
+                单按钮完成整条链：发布 draft 论点版本 → 记录高风险转场审核 → 刷新预检 →
+                以模板生成的结构化事实文案（不含任何因果推断）提交每日判定；
+                四类门禁仍在服务端全量校验，任一步失败即停止后续步骤。
+              </p>
+            ) : (
+              <p className="admin-lifecycle-message is-error" role="alert">{oneClickReason}</p>
+            )}
+            {oneClick.status === "idle" ? null : (
+              <ol className="admin-daily-oneclick-steps">
+                {oneClick.steps.map((step) => (
+                  <li data-state={step.state} key={step.id}>
+                    <strong>{step.label}</strong>：{oneClickStepStateLabel(step.state)}
+                    {step.detail === null ? null : ` —— ${step.detail}`}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
           <form className="admin-lifecycle-form" onSubmit={submitPublish}>
             <label htmlFor="admin-daily-headline">标题</label>
             <input

@@ -1,28 +1,39 @@
 import type { OverviewPageModel, ThesisCardModel } from "../domain/page-models";
 import type { SourceHealthStatus } from "../domain/ingestion";
 
-export function stageLabel(stage: ThesisCardModel["stage"]): string {
-  const labels: Record<ThesisCardModel["stage"], string> = {
-    watch: "观察中",
-    weather_realized: "天气已兑现",
-    physical_pressure: "实物承压",
-    balance_tightening: "供需收紧",
-    market_confirmed: "市场确认",
-    easing: "压力缓解",
-  };
+const STAGE_LABELS: Record<ThesisCardModel["stage"], string> = {
+  watch: "观察中",
+  weather_realized: "天气已兑现",
+  physical_pressure: "实物承压",
+  balance_tightening: "供需收紧",
+  market_confirmed: "市场确认",
+  easing: "压力缓解",
+};
 
-  return labels[stage];
+const DIRECTION_LABELS: Record<ThesisCardModel["direction"], string> = {
+  bearish: "偏空",
+  bullish: "偏多",
+  mixed: "分化",
+  neutral: "中性",
+};
+
+export function stageLabel(stage: ThesisCardModel["stage"]): string {
+  return STAGE_LABELS[stage];
 }
 
 export function directionLabel(direction: ThesisCardModel["direction"]): string {
-  const labels: Record<ThesisCardModel["direction"], string> = {
-    bearish: "偏空",
-    bullish: "偏多",
-    mixed: "分化",
-    neutral: "中性",
-  };
+  return DIRECTION_LABELS[direction];
+}
 
-  return labels[direction];
+/**
+ * 一键发布模板使用的安全标签：值域外的值（契约漂移）原样可见，而不是渲染成 undefined。
+ */
+export function stageLabelText(stage: string): string {
+  return (STAGE_LABELS as Record<string, string>)[stage] ?? stage;
+}
+
+export function directionLabelText(direction: string): string {
+  return (DIRECTION_LABELS as Record<string, string>)[direction] ?? direction;
 }
 
 export function healthLabel(status: SourceHealthStatus): string {
