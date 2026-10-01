@@ -141,5 +141,6 @@ function memoryRepository(source: EnabledManualSource | null): ManualSourceRunRe
       });
       return next;
     },
+    abandonDispatching: async () => undefined,
   };
 }

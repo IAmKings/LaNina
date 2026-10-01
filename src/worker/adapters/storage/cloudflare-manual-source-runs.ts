@@ -93,6 +93,32 @@ export class D1ManualSourceRunRepository implements ManualSourceRunRepository {
     return { operation: created, created: true };
   }
 
+  async abandonDispatching(
+    operationId: string,
+    sourceId: string,
+    actor: string,
+    reason: string,
+    occurredAt: string,
+  ): Promise<void> {
+    try {
+      await this.database.batch([
+        this.database.prepare(
+          `UPDATE admin_source_run_operations
+              SET status = 'failed', error_code = 'DATABASE', completed_at = ?
+            WHERE id = ? AND status = 'dispatching'`,
+        ).bind(occurredAt, operationId),
+        this.database.prepare(
+          `INSERT INTO audit_log (
+             id, entity_type, entity_id, action, actor, reason, before_json, after_json, created_at
+           ) VALUES (?, 'source', ?, 'manual_run_abandoned', ?, ?, NULL,
+                     json_object('operationId', ?), ?)`,
+        ).bind(`audit:${operationId}:abandoned`, sourceId, actor, reason, operationId, occurredAt),
+      ]);
+    } catch {
+      reportStorageFailure("manual-source-runs.abandonDispatching");
+    }
+  }
+
   async complete(
     operationId: string,
     actor: string,

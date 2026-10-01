@@ -86,9 +86,17 @@ export class ClimatologyRefreshJob {
     config: ClimatologySourceConfig,
     scheduledAt: string,
   ): Promise<ClimatologyRegionOutcome> {
-    const freshness = await this.repository.loadFreshness(config.indicatorId, scheduledAt);
+    let freshness: ClimatologyFreshness;
+    try {
+      // 游标读取与刷新门判定一并 fail-soft：单区结构漂移降级为 failed，
+      // 不让一个区域的异常把当日评估整体卡死（2026-09-29 卡死审计 §1）。
+      freshness = await this.repository.loadFreshness(config.indicatorId, scheduledAt);
+    } catch (error) {
+      if (!(error instanceof SourceCollectionError) || error.code === "DATABASE") throw error;
+      return outcome(config, "failed", error.code);
+    }
     if (freshness.monthCount > 12) {
-      throw new SourceCollectionError("VALIDATION", "月气候态观测期超过 12 个月");
+      return outcome(config, "failed", "VALIDATION");
     }
     if (isFresh(freshness, scheduledAt)) {
       return outcome(config, "skipped_fresh", null);
@@ -132,9 +140,10 @@ export class ClimatologyRefreshJob {
       });
       return outcome(config, persisted, null);
     } catch (error) {
-      if (!(error instanceof SourceCollectionError) || error.code === "DATABASE" || error.code === "VALIDATION") {
-        throw error;
-      }
+      // persist 的 VALIDATION（含 12 个月覆盖断言）与结构漂移同 NETWORK 一样按单区
+      // failed 降级：气候态缺失只影响该区派生指标，不得让当日评估整体失败。
+      // 仅 DATABASE（D1 故障）向上抛——它是全局性的，当日评估 fail-closed 合理。
+      if (!(error instanceof SourceCollectionError) || error.code === "DATABASE") throw error;
       return outcome(config, "failed", error.code);
     }
   }

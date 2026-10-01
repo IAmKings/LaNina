@@ -5,7 +5,7 @@ import type {
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
-import { fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
+import { fetchWithinTimeout, readBodyWithinLimit, sha256Hex, SOURCE_FETCH_CACHE_BYPASS } from "./http";
 
 export const UNCTAD_SOURCE_ID = "unctad_datahub_lsci";
 export const UNCTAD_ADAPTER_KEY = "unctad-lsci-v1";
@@ -126,6 +126,7 @@ async function fetchFactsMonthRaw(
         ClientId: clientId,
         ClientSecret: apiKey,
       }),
+      ...SOURCE_FETCH_CACHE_BYPASS,
     });
   } catch {
     throw new SourceCollectionError("NETWORK", "无法连接 UNCTAD Data Hub", { retryable: true });

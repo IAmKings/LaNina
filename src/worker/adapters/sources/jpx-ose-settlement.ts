@@ -5,7 +5,7 @@ import type {
   SourceAdapter,
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
-import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
+import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex, SOURCE_FETCH_CACHE_BYPASS } from "./http";
 import { decodeUtf8, unchangedResult } from "./adapter-base";
 
 export const JPX_OSE_SOURCE_ID = "jpx_ose_rubber_settlement";
@@ -45,6 +45,7 @@ export const jpxOseSettlementAdapter: SourceAdapter = {
     let page: Response;
     try {
       page = await fetchWithinTimeout(context.fetch, context.sourceUrl, {
+      ...SOURCE_FETCH_CACHE_BYPASS,
         headers: pageHeaders,
         redirect: "follow",
       });
@@ -70,7 +71,7 @@ export const jpxOseSettlementAdapter: SourceAdapter = {
     const csvHeaders = new Headers({ Accept: "text/csv, text/plain" });
     let csv: Response;
     try {
-      csv = await fetchWithinTimeout(context.fetch, csvUrl, { headers: csvHeaders, redirect: "follow" });
+      csv = await fetchWithinTimeout(context.fetch, csvUrl, { headers: csvHeaders, redirect: "follow", ...SOURCE_FETCH_CACHE_BYPASS });
     } catch {
       throw new SourceCollectionError("NETWORK", "无法连接 JPX 结算 CSV", { retryable: true });
     }

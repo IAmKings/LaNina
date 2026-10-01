@@ -123,3 +123,12 @@ export function errorForResponse(response: Response): SourceCollectionError {
   }
   return new SourceCollectionError("VALIDATION", "来源返回不可接受的 HTTP 状态", options);
 }
+
+/**
+ * 子请求缓存旁路（时效敏感观测来源统一使用）：显式要求 Cloudflare 边缘不做缓存。
+ * 2026-09-29 实测 NOAA RONI 页在子请求路径被边缘缓存约 7 个月；注意不可与
+ * cache: "no-store" 组合（workerd 拒绝该组合）。
+ */
+export const SOURCE_FETCH_CACHE_BYPASS = {
+  cf: { cacheTtl: 0, cacheEverything: false },
+} as const;

@@ -32,7 +32,8 @@ import { parseCanonicalUtc } from "../ingestion/time";
  * 12 个月或窗口内基准观测缺口只跳过该定义（insufficient_history），不产出观测、不算错误。
  */
 
-export type DerivedRecalculationErrorCode = "VALIDATION" | "DATABASE";
+export type DerivedRecalculationErrorCode = "VALIDATION" | "DATABASE"
+  | "SCHEMA_DRIFT";
 
 export class DerivedIndicatorError extends Error {
   constructor(readonly code: DerivedRecalculationErrorCode, message: string) {
@@ -146,13 +147,19 @@ export interface DerivedIndicatorRepository {
   ): Promise<readonly PersistedDerivedObservation[]>;
 }
 
-export type DerivedIndicatorOutcomeStatus = "written" | "unchanged" | "insufficient_history";
+export type DerivedIndicatorOutcomeStatus =
+  | "written"
+  | "unchanged"
+  | "insufficient_history"
+  | "failed";
 
 export interface DerivedIndicatorOutcome {
   readonly derivedIndicatorId: string;
   readonly status: DerivedIndicatorOutcomeStatus;
   readonly observedAt: string | null;
   readonly value: number | null;
+  /** failed 时的稳定错误码（VALIDATION/…），供 cron 日志与数据健康面归因。 */
+  readonly errorCode?: string;
 }
 
 export interface DerivedRecalculationRequest {
@@ -183,20 +190,39 @@ export class DerivedIndicatorRecalculationJob {
     const draftOutcomes: DerivedIndicatorOutcome[] = [];
     const pendingIndexes: number[] = [];
     for (const definition of this.definitions) {
-      if (isMarketYearComputation(definition.computation)) {
-        const prepared = await this.prepareMarketYearWrite(definition, scheduledAt);
-        draftOutcomes.push(prepared.outcome);
-        if (prepared.write !== null) {
-          pendingIndexes.push(draftOutcomes.length - 1);
-          writes.push(prepared.write);
+      // 按定义隔离：单个派生指标的配置漂移/读取失败降级为 failed（该指标本轮不产出，
+      // 数值规则自然未命中），不让一个定义把当日评估整体卡死（2026-09-29 卡死审计 §1）。
+      // 仅写入阶段（persistDerivedObservations 的 D1 batch）保持整批原子。
+      try {
+        if (isMarketYearComputation(definition.computation)) {
+          const prepared = await this.prepareMarketYearWrite(definition, scheduledAt);
+          draftOutcomes.push(prepared.outcome);
+          if (prepared.write !== null) {
+            pendingIndexes.push(draftOutcomes.length - 1);
+            writes.push(prepared.write);
+          }
+        } else {
+          const prepared = await this.prepareRainAnomalyWrite(definition, scheduledAt);
+          draftOutcomes.push(prepared.outcome);
+          if (prepared.write !== null) {
+            pendingIndexes.push(draftOutcomes.length - 1);
+            writes.push(prepared.write);
+          }
         }
-      } else {
-        const prepared = await this.prepareRainAnomalyWrite(definition, scheduledAt);
-        draftOutcomes.push(prepared.outcome);
-        if (prepared.write !== null) {
-          pendingIndexes.push(draftOutcomes.length - 1);
-          writes.push(prepared.write);
-        }
+      } catch (error) {
+        // 降级边界：数据形态类 VALIDATION（单指标缺数据/形状漂移）按 failed 降级，
+        // 该指标本轮不产出；定义/身份漂移（SCHEMA_DRIFT——代码配置错误）与 DATABASE
+        // （全局故障）响亮重抛，不得静默吞掉编程缺陷（2026-09-29 卡死审计 §1）。
+        if (!(error instanceof DerivedIndicatorError)
+          || error.code === "DATABASE"
+          || error.code === "SCHEMA_DRIFT") throw error;
+        draftOutcomes.push({
+          derivedIndicatorId: definition.derivedIndicatorId,
+          status: "failed",
+          observedAt: null,
+          value: null,
+          errorCode: error.code,
+        });
       }
     }
 
@@ -317,8 +343,9 @@ export class DerivedIndicatorRecalculationJob {
 function requireClimatologyIndicatorId(definition: DerivedIndicatorDefinition): string {
   if (definition.climatologyIndicatorId === null) {
     // 降水距平定义必须声明其气候态基准（注册表不变量，domain 校验之外的装配层护栏）。
+    // 注册表形态缺陷属代码错误：抛 SCHEMA_DRIFT 响亮失败，不走 per-definition 降级。
     throw new DerivedIndicatorError(
-      "VALIDATION",
+      "SCHEMA_DRIFT",
       `降水距平定义 ${definition.derivedIndicatorId} 缺少气候态基准指标`,
     );
   }
@@ -345,7 +372,7 @@ function assertSameSourceParent(
   for (const row of series) {
     if (row.sourceId !== definition.parentSourceId || row.runSourceId !== definition.parentSourceId) {
       throw new DerivedIndicatorError(
-        "VALIDATION",
+        "SCHEMA_DRIFT",
         `派生指标 ${definition.derivedIndicatorId} 的基准观测来源与父源不一致`,
       );
     }

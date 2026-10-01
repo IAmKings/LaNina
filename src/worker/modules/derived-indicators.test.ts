@@ -198,20 +198,20 @@ describe("DerivedIndicatorRecalculationJob", () => {
     ]);
   });
 
-  it("fails closed with VALIDATION when a base observation belongs to another source", async () => {
+  it("fails closed with SCHEMA_DRIFT when a base observation belongs to another source", async () => {
     const mismatched = palmSeries().map((row) => ({ ...row, runSourceId: "usda_psd_south_africa_corn" }));
     const repository = new FakeRepository(new Map([[PALM_YOY.baseIndicatorId, mismatched]]));
     await expect(
       new DerivedIndicatorRecalculationJob(repository, [PALM_YOY]).run({ scheduledAt: SCHEDULED_AT }),
-    ).rejects.toMatchObject({ code: "VALIDATION", name: "DerivedIndicatorError" });
+    ).rejects.toMatchObject({ code: "SCHEMA_DRIFT", name: "DerivedIndicatorError" });
   });
 
-  it("fails closed with VALIDATION when the base indicator itself sits on another source", async () => {
+  it("fails closed with SCHEMA_DRIFT when the base indicator itself sits on another source", async () => {
     const mismatched = palmSeries().map((row) => ({ ...row, sourceId: "some_other_source" }));
     const repository = new FakeRepository(new Map([[PALM_YOY.baseIndicatorId, mismatched]]));
     await expect(
       new DerivedIndicatorRecalculationJob(repository, [PALM_YOY]).run({ scheduledAt: SCHEDULED_AT }),
-    ).rejects.toMatchObject({ code: "VALIDATION" });
+    ).rejects.toMatchObject({ code: "SCHEMA_DRIFT" });
   });
 
   it("fails closed with DATABASE when persistence reports an unexpected result count", async () => {
@@ -356,7 +356,7 @@ describe("DerivedIndicatorRecalculationJob rain anomaly (Round 2)", () => {
     expect(result.outcomes.map(({ status }) => status)).toEqual(["insufficient_history"]);
   });
 
-  it("fails closed with VALIDATION when a climatology row belongs to another source", async () => {
+  it("fails closed with SCHEMA_DRIFT when a climatology row belongs to another source", async () => {
     const repository = new FakeRepository(
       new Map(),
       [],
@@ -369,10 +369,10 @@ describe("DerivedIndicatorRecalculationJob rain anomaly (Round 2)", () => {
     );
     await expect(
       new DerivedIndicatorRecalculationJob(repository, [THAI_30D]).run({ scheduledAt: SCHEDULED_AT }),
-    ).rejects.toMatchObject({ code: "VALIDATION", name: "DerivedIndicatorError" });
+    ).rejects.toMatchObject({ code: "SCHEMA_DRIFT", name: "DerivedIndicatorError" });
   });
 
-  it("fails closed with VALIDATION when a rain anomaly definition declares no climatology", async () => {
+  it("fails closed with SCHEMA_DRIFT when a rain anomaly definition declares no climatology", async () => {
     const broken: DerivedIndicatorDefinition = { ...THAI_30D, climatologyIndicatorId: null };
     const repository = new FakeRepository(
       new Map(),
@@ -382,7 +382,7 @@ describe("DerivedIndicatorRecalculationJob rain anomaly (Round 2)", () => {
     );
     await expect(
       new DerivedIndicatorRecalculationJob(repository, [broken]).run({ scheduledAt: SCHEDULED_AT }),
-    ).rejects.toMatchObject({ code: "VALIDATION" });
+    ).rejects.toMatchObject({ code: "SCHEMA_DRIFT" });
   });
 
   it("derives nothing (insufficient_history) when the daily series is empty", async () => {

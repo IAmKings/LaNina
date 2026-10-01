@@ -46,6 +46,14 @@ export interface ManualSourceRunRepository {
     occurredAt: string,
     outcome: RunSourceOutcome,
   ): Promise<ManualSourceRunOperation>;
+  /** runner 抛错（D1 瞬断/Worker 被杀）时把 dispatching 操作收口为 failed 终态 + 审计。 */
+  abandonDispatching(
+    operationId: string,
+    sourceId: string,
+    actor: string,
+    reason: string,
+    occurredAt: string,
+  ): Promise<void>;
 }
 
 export type ManualSourceRunner = (
@@ -120,8 +128,17 @@ export class ManualSourceRunModule {
         scheduledAt: input.occurredAt,
         forceReparse: input.forceReparse === true,
       }, adapter);
-    } catch {
+    } catch (error) {
       // No unclassified dispatch failure may be reported as a successful operation.
+      // 卡死审计 §4：runner 抛错（D1 瞬断/Worker 被杀）时不能把 operation 留在
+      // dispatching——补记 fail 终态（含审计），否则该幂等键重放永远 dispatching。
+      await this.repository.abandonDispatching(
+        started.operation.id,
+        started.operation.sourceId,
+        input.actor,
+        input.reason,
+        input.occurredAt,
+      ).catch(() => undefined);
       throw new ManualSourceRunError("DATABASE");
     }
 

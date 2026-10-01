@@ -43,7 +43,8 @@ export type DailyEvaluationBlockCode =
   | "MISSING_EVALUATION_INPUT"
   | "DIRECTION_UNAVAILABLE"
   | "CONFIDENCE_UNAVAILABLE"
-  | "NO_SELECTED_EVIDENCE";
+  | "NO_SELECTED_EVIDENCE"
+  | "EVALUATION_DATABASE";
 
 export type DailyEvaluationThesisResult =
   | {
@@ -99,13 +100,23 @@ export class DailyEvaluationJob {
 
     const theses: DailyEvaluationThesisResult[] = [];
     for (const seed of stableSeeds) {
-      theses.push(await evaluateSeedAtCutoff(
-        seed,
-        cutoff,
-        inputsByThesis.get(seed.id),
-        this.drafts,
-        { createdBy: "system:daily-evaluation", changeReason: "每日定时评估" },
-      ));
+      // 单论点失败（如 D1 写入瞬断）降级为 blocked 并注明原因，不阻断排在其后
+      // 论点的当日评估（2026-09-29 卡死审计 §1）；次日 cron 幂等重跑自动补齐。
+      try {
+        theses.push(await evaluateSeedAtCutoff(
+          seed,
+          cutoff,
+          inputsByThesis.get(seed.id),
+          this.drafts,
+          { createdBy: "system:daily-evaluation", changeReason: "每日定时评估" },
+        ));
+      } catch (error) {
+        if (error instanceof DailyScheduleError && error.code === "DATABASE") {
+          theses.push(blocked(seed.id, "EVALUATION_DATABASE"));
+        } else {
+          throw error;
+        }
+      }
     }
 
     const draftsReady = theses.filter((item) => item.status === "drafted").length;

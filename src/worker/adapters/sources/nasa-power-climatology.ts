@@ -8,7 +8,7 @@ import {
   type RainfallRegionV1Id,
 } from "../../../domain/rainfall-regions";
 import { decodeUtf8 } from "./adapter-base";
-import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
+import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex, SOURCE_FETCH_CACHE_BYPASS } from "./http";
 
 /**
  * NASA POWER 月气候态采集变体（签字口径 2026-09-27：WMO 1991–2020）。
@@ -144,6 +144,7 @@ export async function collectNasaPowerClimatology(
       response = await fetchWithinTimeout(fetch, requestUrl, {
         headers: { Accept: "application/json" },
         redirect: "manual",
+        ...SOURCE_FETCH_CACHE_BYPASS,
       });
     } catch (error) {
       throw new SourceCollectionError("NETWORK", "无法连接 NASA POWER 气候态", {

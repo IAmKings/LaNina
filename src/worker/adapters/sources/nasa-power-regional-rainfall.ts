@@ -15,7 +15,7 @@ import type {
 } from "../../../domain/ingestion";
 import { SourceCollectionError } from "../../../domain/ingestion";
 import { parseCanonicalUtc } from "../../ingestion/time";
-import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex } from "./http";
+import { errorForResponse, fetchWithinTimeout, readBodyWithinLimit, sha256Hex, SOURCE_FETCH_CACHE_BYPASS } from "./http";
 import { decodeUtf8, unchangedResult } from "./adapter-base";
 
 export const NASA_POWER_RAINFALL_ADAPTER_KEY = "nasa-power-regional-rainfall-v1";
@@ -98,7 +98,7 @@ export const nasaPowerRegionalRainfallAdapter: SourceAdapter = {
         response = await fetchWithinTimeout(
           context.fetch,
           requestUrl,
-          { headers: { Accept: "application/json" }, redirect: "manual" },
+          { headers: { Accept: "application/json" }, redirect: "manual", ...SOURCE_FETCH_CACHE_BYPASS },
         );
       } catch (error) {
         throw new SourceCollectionError("NETWORK", "无法连接 NASA POWER", { retryable: true, cause: error });

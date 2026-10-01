@@ -160,7 +160,7 @@ export function AdminRunsPage() {
                 onChange={(event) => setForceReparse(event.target.checked)}
                 type="checkbox"
               />
-              <span>强制重新解析：忽略上游内容哈希（解析器修复后让同一页面重新入库）。</span>
+              <span>强制重新解析：忽略上游内容哈希，即使页面未变化也完整重跑解析与入库（解析器修复后补齐数据时勾选；日常采集无需勾选）。</span>
             </label>
             <button
               disabled={busy || sourceId === "" || reason.trim().length === 0}

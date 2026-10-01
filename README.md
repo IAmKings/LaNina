@@ -288,6 +288,7 @@ Cron 或自动发布。`confirmed` 只是人工只读核验结果，不是 stagi
 - [来源发布登记册](docs/operations/source-release-register.md)：每个来源的再分发边界、当前启用状态与
   三项签署状态（当前均为 `pending`）。
 - [恢复与回滚运行手册](docs/operations/recovery-runbook.md)：只读检查与受权写操作分段，含仅限 staging 的演练清单。
+- [正式版运行走查流程表](docs/operations/daily-walkthrough.md)：每日自动链路、人工发布、周期核验与已知停滞模式速查（2026-09-29 卡死审计结论）。
 - [staging 告警与故障注入证据包](docs/operations/staging-alert-rehearsal-evidence.md)：六类场景的授权、证据与停止条件。
 - 许可预审：[NOAA CPC RONI](docs/operations/noaa-cpc-roni-license-pre-review.md)、
   [NASA POWER](docs/operations/nasa-power-regional-rainfall-license-pre-review.md)、
